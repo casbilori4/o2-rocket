@@ -392,6 +392,7 @@ function bootstrap() {
 	$lcp->register_hooks();
 
 	( new Media\Resource_Hints( $lcp ) )->register_hooks();
+	( new Optimization\Css_Delivery( $lcp ) )->register_hooks();
 	( new Optimization\Google_Fonts() )->register_hooks();
 	( new Optimization\Heartbeat() )->register_hooks();
 	( new Database\Cleaner() )->register_hooks();

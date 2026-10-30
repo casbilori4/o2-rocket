@@ -8,6 +8,7 @@ namespace O2Rocket\Media;
 use O2Rocket\Cache\Cache_Engine;
 use O2Rocket\Cache\Page_Cache;
 use O2Rocket\Core\Url_Resolver;
+use O2Rocket\Optimization\Css_Delivery;
 use O2Rocket\Optimization\Html_Pipeline;
 use O2Rocket\Optimization\Html_Tag;
 
@@ -28,7 +29,7 @@ final class Lcp_Optimizer {
 	const BEACON_FILE       = 'assets/js/beacon';
 	const RATE_TRANSIENT    = 'o2_rocket_beacon_rate';
 	const RATE_LIMIT        = 120;
-	const MAX_PAYLOAD       = 20000;
+	const MAX_PAYLOAD       = 80000;
 	const MAX_ABOVE         = 20;
 
 	const IMAGE_TYPES = array( 'img', 'img-srcset', 'picture' );
@@ -74,7 +75,12 @@ final class Lcp_Optimizer {
 	public function is_beacon_enabled(): bool {
 		$stored = get_option( O2_ROCKET_OPTION, array() );
 
-		return $this->is_enabled() || ( is_array( $stored ) && ( ! empty( $stored[ Resource_Hints::SETTING_FONTS_AUTO ] ) || ! empty( $stored[ Resource_Hints::SETTING_PRECONNECT_AUTO ] ) ) );
+		if ( $this->is_enabled() || ! is_array( $stored ) ) {
+			return $this->is_enabled();
+		}
+
+		// Também alimenta o CSS crítico (tokens dos elementos acima da dobra).
+		return ! empty( $stored[ Resource_Hints::SETTING_FONTS_AUTO ] ) || ! empty( $stored[ Resource_Hints::SETTING_PRECONNECT_AUTO ] ) || ( isset( $stored[ Css_Delivery::SETTING_MODE ] ) && 'critical' === $stored[ Css_Delivery::SETTING_MODE ] );
 	}
 
 	public function maybe_install(): void {
@@ -175,6 +181,7 @@ final class Lcp_Optimizer {
 			'fonts'   => isset( $found['fonts'] ) && is_array( $found['fonts'] ) ? array_slice( $this->sanitize_urls( $found['fonts'] ), 0, 8 ) : array(),
 			'origins' => isset( $found['origins'] ) && is_array( $found['origins'] ) ? self::sanitize_origins( $found['origins'] ) : array(),
 			'cors'    => isset( $found['cors'] ) && is_array( $found['cors'] ) ? self::sanitize_origins( $found['cors'] ) : array(),
+			'tokens'  => is_array( $data ) && isset( $data['tokens'] ) && is_array( $data['tokens'] ) ? self::sanitize_tokens( $data['tokens'] ) : array(),
 		);
 
 		if ( ! $this->is_plausible( $url, $device, $lcp ) ) {
@@ -195,6 +202,35 @@ final class Lcp_Optimizer {
 
 	public static function sign( string $url, string $mode ): string {
 		return substr( hash_hmac( 'sha256', 'o2r-beacon|' . untrailingslashit( $url ) . '|' . $mode, wp_salt( 'nonce' ) ), 0, 32 );
+	}
+
+	// Tags e palavras (classes, ids, atributos) dos elementos acima da dobra, para o CSS crítico.
+	public static function sanitize_tokens( array $tokens ): array {
+		$tags  = isset( $tokens['tags'] ) && is_array( $tokens['tags'] ) ? $tokens['tags'] : array();
+		$words = isset( $tokens['words'] ) && is_array( $tokens['words'] ) ? $tokens['words'] : array();
+
+		$tags = array_values(
+			array_filter(
+				array_slice( $tags, 0, 300 ),
+				static function ( $tag ) {
+					return is_string( $tag ) && 1 === preg_match( '#^[a-z][a-z0-9-]{0,40}$#', $tag );
+				}
+			)
+		);
+
+		$words = array_values(
+			array_filter(
+				array_slice( $words, 0, 4000 ),
+				static function ( $word ) {
+					return is_string( $word ) && 1 === preg_match( '#^[A-Za-z_][A-Za-z0-9_-]{0,100}$#', $word );
+				}
+			)
+		);
+
+		return empty( $tags ) ? array() : array(
+			'tags'  => $tags,
+			'words' => $words,
+		);
 	}
 
 	// "https://host[:porta]" apenas (sem caminho), no máximo 10.

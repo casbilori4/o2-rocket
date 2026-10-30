@@ -15,6 +15,7 @@ use O2Rocket\Media\Lazy_Load;
 use O2Rocket\Media\Lcp_Optimizer;
 use O2Rocket\Media\Resource_Hints;
 use O2Rocket\Optimization\Asset_Minifier;
+use O2Rocket\Optimization\Css_Delivery;
 use O2Rocket\Optimization\Delay_Js;
 use O2Rocket\Optimization\File_Optimizer;
 use O2Rocket\Optimization\Google_Fonts;
@@ -206,6 +207,41 @@ final class Settings {
 			'type'              => 'lines',
 			'default'           => array(),
 			'sanitize_callback' => array( self::class, 'sanitize_file_patterns' ),
+		);
+
+		$schema[ Css_Delivery::SETTING_MODE ] = array(
+			'tab'               => self::TAB_FILE_OPTIMIZATION,
+			'type'              => 'select',
+			'default'           => 'off',
+			'choices'           => self::get_css_mode_choices(),
+			'sanitize_callback' => array( Css_Delivery::class, 'sanitize_mode' ),
+		);
+
+		$schema[ Css_Delivery::SETTING_FALLBACK ] = array(
+			'tab'     => self::TAB_FILE_OPTIMIZATION,
+			'type'    => 'bool',
+			'default' => true,
+		);
+
+		$schema[ Css_Delivery::SETTING_SAFELIST ] = array(
+			'tab'               => self::TAB_FILE_OPTIMIZATION,
+			'type'              => 'lines',
+			'default'           => array(),
+			'sanitize_callback' => array( self::class, 'sanitize_file_patterns' ),
+		);
+
+		$schema[ Css_Delivery::SETTING_EXCLUDED ] = array(
+			'tab'               => self::TAB_FILE_OPTIMIZATION,
+			'type'              => 'lines',
+			'default'           => array(),
+			'sanitize_callback' => array( self::class, 'sanitize_file_patterns' ),
+		);
+
+		$schema[ Css_Delivery::SETTING_CRITICAL ] = array(
+			'tab'               => self::TAB_FILE_OPTIMIZATION,
+			'type'              => 'textarea',
+			'default'           => '',
+			'sanitize_callback' => array( Css_Delivery::class, 'sanitize_css' ),
 		);
 
 		$schema[ Asset_Minifier::SETTING_JS ] = array(
@@ -419,6 +455,14 @@ final class Settings {
 		}
 
 		return $schema;
+	}
+
+	public static function get_css_mode_choices(): array {
+		return array(
+			'off'      => __( 'Desligado', 'o2-rocket' ),
+			'unused'   => __( 'Remover CSS não utilizado (recomendado)', 'o2-rocket' ),
+			'critical' => __( 'CSS crítico + carregar o restante sem bloquear', 'o2-rocket' ),
+		);
 	}
 
 	public static function get_frequency_choices(): array {
@@ -905,6 +949,86 @@ final class Settings {
 				'rows'        => 3,
 				'placeholder' => "/wp-content/plugins/meu-plugin/estilo.css\nmeu-tema/assets/css/",
 				'description' => __( 'Trecho da URL do arquivo, um por linha.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_section(
+			'o2r_css_delivery',
+			__( 'Entrega do CSS', 'o2-rocket' ),
+			array( $this, 'render_css_delivery_section' ),
+			$page
+		);
+
+		add_settings_field(
+			Css_Delivery::SETTING_MODE,
+			__( 'Otimizar a entrega do CSS', 'o2-rocket' ),
+			array( $this, 'render_select' ),
+			$page,
+			'o2r_css_delivery',
+			array(
+				'label_for'   => 'o2r-css-mode',
+				'key'         => Css_Delivery::SETTING_MODE,
+				'choices'     => self::get_css_mode_choices(),
+				'description' => __( 'Remover CSS não utilizado: cada página leva em linha só as regras que podem valer para ela (o resto sai do carregamento). CSS crítico: só o CSS do topo da página vai em linha (medido pelo beacon local; sem medição, estimado pelo início da página) e as folhas de estilo carregam sem bloquear. Tudo calculado no seu servidor, sem serviço externo.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Css_Delivery::SETTING_FALLBACK,
+			__( 'Rede de segurança', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_css_delivery',
+			array(
+				'label_for'   => 'o2r-css-fallback',
+				'key'         => Css_Delivery::SETTING_FALLBACK,
+				'label'       => __( 'Carregar o CSS completo na primeira interação do visitante', 'o2-rocket' ),
+				'description' => __( 'Só no modo "Remover CSS não utilizado". Estilos de menus, abas e janelas abertos por JavaScript chegam antes do clique terminar. Não afeta a nota do PageSpeed.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Css_Delivery::SETTING_SAFELIST,
+			__( 'Seletores que nunca saem', 'o2-rocket' ),
+			array( $this, 'render_textarea' ),
+			$page,
+			'o2r_css_delivery',
+			array(
+				'label_for'   => 'o2r-css-safelist',
+				'key'         => Css_Delivery::SETTING_SAFELIST,
+				'rows'        => 3,
+				'placeholder' => ".minha-classe-js\nmeu-slider-*\n#janela-oferta",
+				'description' => __( 'Classes ou ids (aceita *) acrescentados por JavaScript, um por linha. Estados comuns (active, open, show, is-*, has-*, menu, modal, slider...) já são mantidos.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Css_Delivery::SETTING_EXCLUDED,
+			__( 'CSS que fica como está', 'o2-rocket' ),
+			array( $this, 'render_textarea' ),
+			$page,
+			'o2r_css_delivery',
+			array(
+				'label_for'   => 'o2r-css-excluded',
+				'key'         => Css_Delivery::SETTING_EXCLUDED,
+				'rows'        => 3,
+				'placeholder' => "/wp-content/plugins/meu-plugin/estilo.css\nid-do-bloco-style",
+				'description' => __( 'Trecho da URL da folha de estilo ou do id/conteúdo de um bloco <style>, um por linha.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Css_Delivery::SETTING_CRITICAL,
+			__( 'CSS crítico de reserva', 'o2-rocket' ),
+			array( $this, 'render_textarea' ),
+			$page,
+			'o2r_css_delivery',
+			array(
+				'label_for'   => 'o2r-css-critical',
+				'key'         => Css_Delivery::SETTING_CRITICAL,
+				'rows'        => 4,
+				'placeholder' => 'header{...}',
+				'description' => __( 'Opcional, modo CSS crítico: usado nas páginas ainda sem medição do beacon, no lugar da estimativa automática.', 'o2-rocket' ),
 			)
 		);
 
@@ -1665,6 +1789,14 @@ final class Settings {
 		?>
 		<p class="o2r-muted">
 			<?php esc_html_e( 'Ajustes aplicados apenas no front-end do site. O painel, a tela de login, o Personalizador e os editores visuais não são alterados.', 'o2-rocket' ); ?>
+		</p>
+		<?php
+	}
+
+	public function render_css_delivery_section(): void {
+		?>
+		<p class="o2r-muted">
+			<?php esc_html_e( 'Folhas de estilo bloqueiam a renderização: a página só aparece depois de baixar todas. Temas e construtores carregam muito CSS que a página não usa.', 'o2-rocket' ); ?>
 		</p>
 		<?php
 	}

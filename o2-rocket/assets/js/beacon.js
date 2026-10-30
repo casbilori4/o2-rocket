@@ -88,8 +88,39 @@
 		return { type: 'text' };
 	}
 
+	// Tags, classes, ids e atributos dos elementos visíveis no topo: base do CSS crítico gerado no servidor.
+	var tokens = { tags: {}, words: {} };
+	var wordCount = 0;
+
+	function addWord(word) {
+		if (word && !tokens.words[word] && wordCount < 4000) {
+			tokens.words[word] = 1;
+			wordCount++;
+		}
+	}
+
+	function collectTokens(element) {
+		tokens.tags[element.tagName.toLowerCase()] = 1;
+
+		Array.prototype.forEach.call(element.classList || [], function (name) {
+			(name.match(/[A-Za-z_][A-Za-z0-9_-]*/g) || []).forEach(addWord);
+		});
+
+		if (element.id) {
+			(element.id.match(/[A-Za-z_][A-Za-z0-9_-]*/g) || []).forEach(addWord);
+		}
+
+		Array.prototype.forEach.call(element.attributes || [], function (attribute) {
+			if (/^(?:data-|aria-|type$|role$)/.test(attribute.name)) {
+				addWord(attribute.name);
+			}
+		});
+	}
+
 	function aboveTheFold() {
 		var urls = [];
+
+		collectTokens(document.documentElement);
 
 		Array.prototype.forEach.call(document.querySelectorAll('img'), function (img) {
 			var src = absolute(img.currentSrc || img.getAttribute('src'));
@@ -100,13 +131,25 @@
 		});
 
 		Array.prototype.forEach.call(document.querySelectorAll('body *'), function (element) {
-			if (urls.length >= MAX_ABOVE || element.tagName === 'IMG' || element.tagName === 'SCRIPT' || element.tagName === 'STYLE') {
+			if (element.tagName === 'SCRIPT' || element.tagName === 'STYLE' || element.tagName === 'NOSCRIPT') {
+				return;
+			}
+
+			if (element.tagName === 'IMG') {
+				if (inViewport(element)) {
+					collectTokens(element);
+				}
+
 				return;
 			}
 
 			// Posição antes do estilo: getComputedStyle em todos os elementos da página seria caro.
 			if (inViewport(element)) {
-				urls = urls.concat(backgrounds(element));
+				collectTokens(element);
+
+				if (urls.length < MAX_ABOVE) {
+					urls = urls.concat(backgrounds(element));
+				}
 			}
 		});
 
@@ -169,7 +212,9 @@
 		body.append('mode', config.mode);
 		body.append('key', config.key);
 		body.append('device', (window.innerWidth || document.documentElement.clientWidth) < 768 ? 'mobile' : 'desktop');
-		body.append('data', JSON.stringify({ lcp: describe(lcpEntry), above: aboveTheFold(), resources: resources() }));
+		var above = aboveTheFold();
+
+		body.append('data', JSON.stringify({ lcp: describe(lcpEntry), above: above, resources: resources(), tokens: { tags: Object.keys(tokens.tags), words: Object.keys(tokens.words) } }));
 
 		if (!navigator.sendBeacon || !navigator.sendBeacon(config.ajax, body)) {
 			window.fetch(config.ajax, { method: 'POST', body: body, credentials: 'omit', keepalive: true }).catch(function () {});

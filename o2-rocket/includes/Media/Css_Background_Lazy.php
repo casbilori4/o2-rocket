@@ -7,6 +7,7 @@ namespace O2Rocket\Media;
 
 use O2Rocket\Core\Url_Resolver;
 use O2Rocket\Optimization\Asset_Minifier;
+use O2Rocket\Optimization\Css_Parser;
 use O2Rocket\Optimization\Css_Url_Rewriter;
 use O2Rocket\Optimization\Html_Pipeline;
 use O2Rocket\Optimization\Html_Tag;
@@ -177,7 +178,7 @@ final class Css_Background_Lazy {
 	public function get_observed_selectors( string $selector ): array {
 		$targets = array();
 
-		foreach ( self::split_selectors( $selector ) as $part ) {
+		foreach ( Css_Parser::split_selectors( $selector ) as $part ) {
 			$part = trim( (string) preg_replace( self::PSEUDO_ELEMENTS, '', $part ) );
 
 			if ( '' !== $part ) {
@@ -186,31 +187,6 @@ final class Css_Background_Lazy {
 		}
 
 		return array_values( array_unique( $targets ) );
-	}
-
-	// Vírgulas fora de parênteses e colchetes (":is(a, b)" fica inteiro).
-	public static function split_selectors( string $selector ): array {
-		$parts = array();
-		$depth = 0;
-		$start = 0;
-		$len   = strlen( $selector );
-
-		for ( $i = 0; $i < $len; $i++ ) {
-			$char = $selector[ $i ];
-
-			if ( '(' === $char || '[' === $char ) {
-				++$depth;
-			} elseif ( ( ')' === $char || ']' === $char ) && $depth > 0 ) {
-				--$depth;
-			} elseif ( ',' === $char && 0 === $depth ) {
-				$parts[] = substr( $selector, $start, $i - $start );
-				$start   = $i + 1;
-			}
-		}
-
-		$parts[] = substr( $selector, $start );
-
-		return $parts;
 	}
 
 	// Cópia reescrita do arquivo (com o mapa de seletores ao lado); vazio se o arquivo não tem fundos.

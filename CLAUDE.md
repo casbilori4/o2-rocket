@@ -139,7 +139,9 @@ Fase 5 — CSS não utilizado e CSS crítico gerados no próprio servidor; CDN; 
   - [x] Limpeza do banco (9 itens, manter N revisões, órfãos, VACUUM no SQLite) com botão AJAX e agendamento.
   - [x] Heartbeat (site/painel/editor) em aba própria.
   - [x] Ferramentas: exportar/importar/restaurar e diagnóstico.
-- [ ] Fase 5 — RUCSS/CCSS locais, CDN, Cloudflare/Varnish/Sucuri, compatibilidade; `COMPARATIVO.md`
+- [ ] **Fase 5 — em andamento**
+  - [x] Entrega do CSS gerada no servidor (`Optimization\Css_Parser`, `Css_Usage`, `Css_Delivery`, `assets/js/css-loader.js`): modo "unused" (CSS usado em linha + `<template>` com o CSS completo carregado na primeira interação) e "critical" (tokens acima da dobra do beacon, ou estimativa pelo início do `<body>`, ou CSS manual; folhas com `media=print` + onload). Árvore de cada arquivo em cache como PHP (`min/{blog}/tree-{hash}.php`). Testado: 0 pixel de diferença (tema padrão e Elementor), e o crítico sozinho desenha a tela inicial idêntica.
+  - [ ] CDN; Cloudflare; Varnish; Sucuri; compatibilidade com hospedagens e plugins (`wp-rocket/inc/ThirdParty`); extras (mod_rewrite, cache para logados); `COMPARATIVO.md`.
 
 Pendências conhecidas (reavaliar na Fase 5): cache para usuários logados (add-on do WP Rocket), servir o cache pelo mod_rewrite, limpeza do cache do host antigo após troca de domínio.
 
