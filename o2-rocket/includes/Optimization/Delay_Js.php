@@ -25,6 +25,7 @@ final class Delay_Js {
 	const DATA_FILE         = 'data/delay-js-exclusions.php';
 	const LOADER_FILE       = 'assets/js/delay-js';
 	const ELEMENTOR_FILE    = 'assets/js/elementor-animations';
+	const AOS_FILE          = 'assets/js/aos-visible';
 	const REGEX_CHUNK       = 40;
 
 	// Modo seguro: jQuery, scripts em linha do WordPress e todos os arquivos do site rodam normalmente; só terceiros esperam.
@@ -298,6 +299,43 @@ final class Delay_Js {
 		return array_values( array_unique( array_map( 'strtolower', array( get_template(), get_stylesheet(), (string) $theme->get( 'Name' ) ) ) ) );
 	}
 
+	// Sliders e animações que o tema esconde até o JavaScript iniciar ficariam em branco até a primeira interação (e o
+	// PageSpeed acusa NO_LCP): o primeiro slide e os elementos do AOS aparecem já. Quando a biblioteca inicia, a classe
+	// dela (swiper-initialized, slick-initialized, owl-loaded, aos-init) desliga estas regras e ela assume. O :not(#...)
+	// dá peso de id aos seletores para vencer regras do tema como ".page-home .swiper-banner .swiper-slide{opacity:0}".
+	private function get_fallback_css( string $html ): string {
+		$id    = ':not(#o2r-delay-fallback)';
+		$shown = '{opacity:1!important;visibility:visible!important}';
+		$rules = array();
+
+		if ( false !== stripos( $html, 'swiper' ) ) {
+			$swiper  = ':is(.swiper,.swiper-container):not(.swiper-initialized):not(.swiper-container-initialized)';
+			$rules[] = $swiper . $id . ',' . $swiper . ' .swiper-wrapper' . $id . $shown;
+			$rules[] = $swiper . ' .swiper-slide:first-child' . $id . '{opacity:1!important;visibility:visible!important;transform:none!important}';
+			// Regra à parte (navegador sem :has ignora só ela): enquanto o Swiper inicia, ele marca "initialized" antes
+			// de marcar o slide ativo; sem isto o tema esconde o slide nesse intervalo e ele pisca.
+			$rules[] = ':is(.swiper,.swiper-container):not(:has(.swiper-slide-active)) .swiper-slide:first-child' . $id . '{opacity:1!important;visibility:visible!important}';
+		}
+
+		if ( false !== stripos( $html, 'slick' ) ) {
+			$slick   = ':is([data-slick],.slick-slider):not(.slick-initialized)';
+			$rules[] = $slick . $id . ',' . $slick . '>:first-child' . $id . $shown;
+			$rules[] = $slick . '>:not(:first-child)' . $id . '{display:none!important}';
+		}
+
+		if ( false !== stripos( $html, 'owl-carousel' ) ) {
+			$owl     = '.owl-carousel:not(.owl-loaded)';
+			$rules[] = $owl . $id . '{display:block!important;opacity:1!important;visibility:visible!important}';
+			$rules[] = $owl . '>:not(:first-child)' . $id . '{display:none!important}';
+		}
+
+		if ( false !== stripos( $html, 'data-aos' ) ) {
+			$rules[] = '[data-aos]:not(.aos-init)' . $id . '{opacity:1!important;transform:none!important}';
+		}
+
+		return implode( '', (array) apply_filters( 'o2_rocket_delay_js_fallback_css', $rules, $html ) );
+	}
+
 	private function insert_loader( string $html ): string {
 		$timeout = max( 0, min( 60, (int) $this->get_settings()[ self::SETTING_TIMEOUT ] ) );
 		$script  = '<script id="o2r-delay-loader" data-o2r-nodelay>window.o2rDelay=' . wp_json_encode( array( 'timeout' => $timeout ) ) . ';' . inline_script( self::LOADER_FILE ) . '</script>';
@@ -305,6 +343,17 @@ final class Delay_Js {
 		// Animações de entrada do Elementor esperariam o JS: as visíveis na tela aparecem já.
 		if ( false !== strpos( $html, 'elementor-invisible' ) ) {
 			$script .= '<script id="o2r-elementor-animations" data-o2r-nodelay>' . inline_script( self::ELEMENTOR_FILE ) . '</script>';
+		}
+
+		$css = $this->get_fallback_css( $html );
+
+		if ( '' !== $css ) {
+			$script .= '<style id="o2r-delay-fallback">' . $css . '</style>';
+		}
+
+		// AOS: o que já está na tela fica marcado como animado, para não sumir e reaparecer quando o AOS iniciar.
+		if ( false !== stripos( $html, 'data-aos' ) ) {
+			$script .= '<script id="o2r-aos-visible" data-o2r-nodelay>' . inline_script( self::AOS_FILE ) . '</script>';
 		}
 
 		$position = stripos( $html, '</head>' );
