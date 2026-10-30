@@ -28,6 +28,14 @@ final class Delay_Js {
 	const AOS_FILE          = 'assets/js/aos-visible';
 	const REGEX_CHUNK       = 40;
 
+	const SCRIPT_REGEX = '#<script\b((?:[^>"\']|"[^"]*"|\'[^\']*\')*)>(.*?)</script\s*>#is';
+
+	// Arquivo do jQuery (e do Migrate), com ou sem versão no nome.
+	const JQUERY_FILE = '#/jquery(?:-migrate)?(?:[.-]\d+(?:\.\d+)*)?(?:\.slim)?(?:\.min)?\.js(?:$|\?)#i';
+
+	// Código que usa o jQuery: jQuery(...), jQuery.fn, $(document), $(function, $('seletor').
+	const USES_JQUERY = '#\bjQuery\b|\$\s*\(\s*(?:document|window|function|[\'"])#';
+
 	// Modo seguro: jQuery, scripts em linha do WordPress e todos os arquivos do site rodam normalmente; só terceiros esperam.
 	const SAFE_MODE_PATTERNS = array(
 		'\/jquery(-migrate)?-?([0-9.]+)?(\.min|\.slim|\.slim\.min)?\.js',
@@ -54,6 +62,8 @@ final class Delay_Js {
 	private ?array $data = null;
 
 	private int $delayed = 0;
+
+	private bool $keep_jquery = false;
 
 	public function register_hooks(): void {
 		if ( is_admin() || ! $this->is_enabled() ) {
@@ -106,7 +116,9 @@ final class Delay_Js {
 			$html
 		);
 
-		$result = preg_replace_callback( '#<script\b((?:[^>"\']|"[^"]*"|\'[^\']*\')*)>(.*?)</script\s*>#is', array( $this, 'replace_script' ), $html );
+		$this->keep_jquery = $this->needs_jquery_now( $html );
+
+		$result = preg_replace_callback( self::SCRIPT_REGEX, array( $this, 'replace_script' ), $html );
 
 		if ( ! is_string( $result ) ) {
 			return strtr( $html, $protected );
@@ -136,7 +148,7 @@ final class Delay_Js {
 			return $element;
 		}
 
-		if ( $this->is_excluded( $element ) ) {
+		if ( $this->is_excluded( $element ) || ( $this->keep_jquery && null !== $src && 1 === preg_match( self::JQUERY_FILE, $src ) ) ) {
 			return $element;
 		}
 
@@ -155,6 +167,27 @@ final class Delay_Js {
 		++$this->delayed;
 
 		return $new . $content . '</script>';
+	}
+
+	// Script que roda na hora (excluído do atraso) ou atributo onclick/onchange... que chama o jQuery: o jQuery também
+	// precisa rodar na hora, senão "jQuery is not defined" e o menu, o slider... param. Filtro o2_rocket_delay_js_keep_jquery.
+	private function needs_jquery_now( string $html ): bool {
+		$needs = 1 === preg_match( '#\son[a-z]+\s*=\s*(?:"[^"]*\bjQuery\b[^"]*"|\'[^\']*\bjQuery\b[^\']*\')#i', $html );
+
+		if ( ! $needs && preg_match_all( self::SCRIPT_REGEX, $html, $scripts, PREG_SET_ORDER ) ) {
+			foreach ( $scripts as $script ) {
+				$tag  = '<script' . $script[1] . '>';
+				$type = strtolower( trim( (string) Html_Tag::get_attribute( $tag, 'type' ) ) );
+				$src  = (string) Html_Tag::get_attribute( $tag, 'src' );
+
+				if ( ( '' === $type || in_array( $type, Html_Tag::JS_TYPES, true ) ) && 1 !== preg_match( self::JQUERY_FILE, $src ) && 1 === preg_match( self::USES_JQUERY, $script[2] ) && $this->is_excluded( $script[0] ) ) {
+					$needs = true;
+					break;
+				}
+			}
+		}
+
+		return (bool) apply_filters( 'o2_rocket_delay_js_keep_jquery', $needs, $html );
 	}
 
 	public function is_excluded( string $element ): bool {

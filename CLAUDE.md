@@ -86,7 +86,7 @@
 - `Cache_Controls` — escopos `purge_preload`, `purge_preload_url`, `purge_preload_post` ("Limpar e pré-carregar"), `repair` ("Corrigir agora" do alerta vermelho `render_health_alert`, ligado em `o2_rocket_admin_alerts`). Aviso guarda `{message, progress}`; com progresso mostra "x de y" atualizado por JS em linha; no site aparece num canto da tela (`wp_footer`).
 - `o2-rocket.php` — `get_required_files()` lista os PHP obrigatórios: faltando algum, o plugin não carrega e avisa "Instalação incompleta". **Arquivo PHP novo precisa entrar nessa lista.**
 - `Lazy_Load` — imagens dentro de blocos escondidos no celular (`MOBILE_HIDDEN_CLASSES`, `d-none`...) não recebem `fetchpriority=high`/`loading=eager` quando a página serve celular (`data-o2r-mobile-hidden`).
-- `Delay_Js` — `<style id="o2r-delay-fallback">` mostra o 1º slide de Swiper/Slick/Owl e os blocos do AOS até o JS rodar; `assets/js/aos-visible.js` marca os blocos AOS visíveis com `aos-animate`. Filtro `o2_rocket_delay_js_fallback_css`.
+- `Delay_Js` — se algo que roda na hora (script excluído do atraso ou atributo `on*=`) usa o jQuery, o jQuery e o Migrate também não são atrasados (`needs_jquery_now()`, filtro `o2_rocket_delay_js_keep_jquery`; evita "jQuery is not defined" que quebrava menus). `<style id="o2r-delay-fallback">` mostra o 1º slide de Swiper/Slick/Owl e os blocos do AOS até o JS rodar; `assets/js/aos-visible.js` marca os blocos AOS visíveis com `aos-animate`. Filtro `o2_rocket_delay_js_fallback_css`.
 - `Drop_In_Manager::has_no_code()` — `advanced-cache.php` vazio (só `<?php`/comentários) conta como ausente e é substituído; `Page_Cache::get_health()` dá o estado ao vivo, e salvar a aba Page Cache sem mudanças também tenta reinstalar.
 
 ## Ambiente de teste (sessão do Claude)
