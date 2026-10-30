@@ -7,6 +7,8 @@ namespace O2Rocket\Media;
 
 use O2Rocket\Core\Request;
 
+use function O2Rocket\script_url;
+
 defined( 'ABSPATH' ) || exit;
 
 final class Lazy_Load {
@@ -85,7 +87,7 @@ final class Lazy_Load {
 
 		wp_enqueue_script(
 			self::SCRIPT_HANDLE,
-			plugins_url( self::SCRIPT_PATH, O2_ROCKET_FILE ),
+			script_url( self::SCRIPT_PATH ),
 			array(),
 			O2_ROCKET_VERSION,
 			array(

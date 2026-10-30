@@ -39,7 +39,16 @@
   - `Preloader` — cron `o2_rocket_preload` a cada minuto enquanto houver fila; 20 s por execução, uma requisição bloqueante por vez (sem rajadas), trava por transient; sem sitemap usa posts/termos do banco; aprende URLs visitadas; a tela do painel adianta a fila via AJAX.
   - `Link_Prefetch` + `assets/js/prefetch.js` — speculation rules do núcleo (WP 6.8+) em `prefetch`/`moderate` com exclusões; fallback em JS.
 - `includes/Server/Htaccess.php` — bloco `# BEGIN O2 Rocket` no topo do .htaccess (Brotli preferido via `SetEnvIfNoCase ... no-gzip`, GZIP, mod_expires, mod_headers). Só Apache/LiteSpeed, só o site principal no multisite; erro de escrita vira aviso com o bloco para copiar; Nginx recebe trecho equivalente no painel.
-- `includes/Optimization/File_Optimizer.php` — remove `?ver=`, defer de JS.
+- **Otimização do HTML** (`includes/Optimization/`)
+  - `Html_Pipeline` — um único buffer (`template_redirect` 10000, depois do Page_Cache) que aplica o filtro `o2_rocket_optimize_html` por etapas: 10 minificação, 20 CSS (Fase 5), 30 fontes, 35 dimensões, 40 lazy load, 60 WebP, 70 atraso de JS, 80 dicas de recurso, 90 CDN. Pula feeds, embeds, AMP, `?o2r-nooptimize`, `DONOTMINIFY`/`DONOTOPTIMIZE` e respostas não HTML. `Html_Pipeline::is_visitor()` = não logado (etapas que mexem na execução só valem para visitantes).
+  - `Html_Tag` — ler/editar atributos de tags respeitando aspas (use sempre ele, não regex solta).
+  - `Css_Url_Rewriter` — `url()`/`@import` relativos → absolutos; `font-display: swap`.
+  - `Asset_Minifier` — CSS/JS locais → `wp-content/cache/o2-rocket/min/{blog_id}/{nome}-{hash}.{css|js}` (hash do caminho+mtime+tamanho+versão). Pula `.min.js`, módulos ES, `integrity`, externos, exclusões. Cópias apagadas em `o2_rocket_after_purge_all`/limpeza manual.
+  - `Delay_Js` + `assets/js/delay-js.js` (em linha no `<head>`) — `<script>` vira `type="o2rocket/delayed"` (`data-o2r-src`, `data-o2r-type`); o carregador roda na primeira interação, em ordem (normais → defer; async em paralelo), emula `readyState`/`DOMContentLoaded`/`load`/`pageshow`, adia o `ready` do jQuery, troca `document.write` e repete o clique. Exclusões: `data/delay-js-exclusions.php` (padrões + 262 plugins + 153 temas + 21 serviços, das listas do WP Rocket), aplicadas automaticamente para plugins/tema ativos; serviços marcados; modo seguro; padrões do usuário (regex ou texto). `assets/js/elementor-animations.js` mostra as animações de entrada do Elementor visíveis sem esperar o JS.
+  - `File_Optimizer` — remove `?ver=`, defer de JS (via WP_Scripts, com exclusões), remove emojis e jQuery Migrate (só front-end).
+- `includes/Core/Url_Resolver.php` — URL do próprio site ↔ arquivo no disco (wp-content/plugins/uploads fora do padrão, WP em subpasta; nunca sai das pastas do WP).
+- `vendor/` — matthiasmullie/minify e path-converter (MIT) com namespace `O2Rocket\Vendor\...` (ver `vendor/README.md`); registrado no autoloader do `o2-rocket.php`.
+- `assets/js/*.min.js` — gerados a partir dos `.js` com a própria biblioteca (`script_url()` escolhe o `.min.js`, exceto com `SCRIPT_DEBUG`). Ao editar um `.js`, gerar o `.min.js` de novo (script `min-assets.php` do ambiente de teste, ou `new O2Rocket\Vendor\Minify\JS( $codigo )->minify()`).
 - `includes/Media/*` — lazy load, WebP (GD), otimização em massa.
 - `admin/Dashboard.php`, `admin/Media_Dashboard.php` — painéis.
 
@@ -62,6 +71,10 @@ Scripts em `$SCRATCHPAD/scripts/` (não versionados): `mksite.sh <nome> <porta> 
 - Regras de .htaccess ligadas por padrão (como no WP Rocket), sempre dentro de `<IfModule>`. Servir o cache direto pelo mod_rewrite fica para a Fase 5.
 - Desinstalação não apaga os `.webp` (outros plugins usam o mesmo nome de arquivo).
 - `dist/o2-rocket.zip` exclui `assets/images/source/` (logo original de 1,1 MB, não usado em tempo de execução).
+- Fase 2: otimizações (minificação, atraso de JS, lazy load, WebP) rodam para todos no front-end, mas o atraso de JS só para visitantes não logados (como o WP Rocket, que não otimiza para logados). `.min.js` não é minificado de novo (filtro `o2_rocket_minify_min_js`).
+- Combinar JS/CSS não foi implementado de propósito: com HTTP/2/3 é contraproducente e o próprio WP Rocket desliga a combinação de JS quando o atraso de JS está ativo (e removeu a de CSS).
+- Exclusões conhecidas do atraso de JS ficam ligadas por padrão para os plugins/tema ativos (o WP Rocket pede para marcar cada um): opção mais segura.
+- Padrões de exclusão inválidos como regex (há alguns nas listas originais) viram texto literal.
 - Push para o GitHub falhou com 403 (o app do Claude não tem acesso de escrita ao repositório). Os commits ficam locais; tentar `git push -u origin claude/epic-hypatia-j4qzlg` de novo ao fim de cada fase.
 
 ## Roadmap
@@ -90,7 +103,11 @@ Fase 5 — CSS não utilizado e CSS crítico gerados no próprio servidor; CDN; 
   - [x] Pré-carregamento por sitemap (núcleo, Yoast, Rank Math, SEOPress, AIOSEO, TSF + sitemaps extras), fallback pelo banco, exclusões, celular; prefetch ao passar o mouse (speculation rules + fallback JS).
   - [x] .htaccess (Brotli/GZIP, cache do navegador) com marcadores, removido ao desativar/desinstalar; trecho para Nginx no painel.
   - [x] Também: cookies e User-Agents que impedem cache, "sempre limpar estas URLs", limpeza em termos/usuários/widgets/opções/atualizações/home, multisite em subpastas isolado, `uninstall.php`, Bootstrap local.
-- [ ] Fase 2 — minificar CSS/JS, atrasar JS, emojis, jQuery Migrate
+- [x] **Fase 2 — Arquivos** (concluída)
+  - [x] Minificar CSS (URLs relativas corrigidas, `font-display: swap`) e JS (pula `.min.js` e módulos), com exclusões; cópias com hash no nome.
+  - [x] Atrasar JS até a interação com carregador próprio, exclusões automáticas por plugin/tema ativo, serviços externos, modo seguro, tempo opcional, exclusões do usuário; correção das animações do Elementor. Testado no Chromium (ordem, eventos, jQuery ready, document.write, clique repetido).
+  - [x] Remover emojis e jQuery Migrate; exclusões do defer; pipeline único de HTML (WebP migrado para ele).
+  - Não feito de propósito: combinar JS/CSS (ver Decisões).
 - [ ] Fase 3 — lazy load no HTML inteiro, dimensões, LCP, YouTube, WebP com perda
 - [ ] Fase 4 — fontes, preconnect, banco, Heartbeat, importar/exportar
 - [ ] Fase 5 — RUCSS/CCSS locais, CDN, Cloudflare/Varnish/Sucuri, compatibilidade; `COMPARATIVO.md`

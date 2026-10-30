@@ -5,7 +5,7 @@
 
 namespace O2Rocket\Media;
 
-use O2Rocket\Core\Request;
+use O2Rocket\Optimization\Html_Pipeline;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -28,8 +28,6 @@ final class Image_Optimizer {
 
 	private ?array $settings = null;
 
-	private string $buffer = '';
-
 	private array $webp_exists = array();
 
 	public function register_hooks(): void {
@@ -40,8 +38,7 @@ final class Image_Optimizer {
 		}
 
 		if ( ! is_admin() && $this->is_enabled( self::SETTING_SERVE ) ) {
-			// Depois do Page Cache (9999): este buffer fecha antes e o cache já recebe o HTML com .webp.
-			add_action( 'template_redirect', array( $this, 'start_buffer' ), 10000 );
+			add_filter( Html_Pipeline::FILTER, array( $this, 'filter_html' ), 60 );
 		}
 	}
 
@@ -171,34 +168,13 @@ final class Image_Optimizer {
 		}
 	}
 
-	public function start_buffer(): void {
-		if ( ! Request::is_public_frontend() || is_feed() || is_embed() || ! (bool) apply_filters( 'o2_rocket_webp_rewrite', true ) ) {
-			return;
+	// Etapa do pipeline de HTML (o pipeline já confere front-end público e resposta HTML).
+	public function filter_html( $html ) {
+		if ( ! is_string( $html ) || '' === $html || ! (bool) apply_filters( 'o2_rocket_webp_rewrite', true ) ) {
+			return $html;
 		}
 
-		$this->buffer = '';
-
-		ob_start( array( $this, 'process_buffer' ) );
-	}
-
-	// Acumula os blocos (caso algo chame ob_flush) e reescreve o HTML inteiro no fechamento.
-	public function process_buffer( $chunk, $phase = PHP_OUTPUT_HANDLER_FINAL ) {
-		if ( $phase & PHP_OUTPUT_HANDLER_CLEAN ) {
-			$this->buffer = '';
-
-			return '';
-		}
-
-		$this->buffer .= (string) $chunk;
-
-		if ( ! ( $phase & PHP_OUTPUT_HANDLER_FINAL ) ) {
-			return '';
-		}
-
-		$html         = $this->buffer;
-		$this->buffer = '';
-
-		return $this->is_html_response() ? $this->replace_urls( $html ) : $html;
+		return $this->replace_urls( $html );
 	}
 
 	// Troca URLs de uploads .jpg/.jpeg/.png (src, srcset, data-src, url() do CSS) pela versão .webp quando ela existe.
@@ -319,15 +295,5 @@ final class Image_Optimizer {
 		}
 
 		return $result;
-	}
-
-	private function is_html_response(): bool {
-		foreach ( headers_list() as $header ) {
-			if ( 0 === stripos( $header, 'content-type:' ) && false === stripos( $header, 'text/html' ) ) {
-				return false;
-			}
-		}
-
-		return true;
 	}
 }

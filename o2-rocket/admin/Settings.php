@@ -10,6 +10,8 @@ use O2Rocket\Cache\Drop_In_Manager;
 use O2Rocket\Cache\Page_Cache;
 use O2Rocket\Media\Image_Optimizer;
 use O2Rocket\Media\Lazy_Load;
+use O2Rocket\Optimization\Asset_Minifier;
+use O2Rocket\Optimization\Delay_Js;
 use O2Rocket\Optimization\File_Optimizer;
 use O2Rocket\Preload\Link_Prefetch;
 use O2Rocket\Preload\Preloader;
@@ -32,6 +34,8 @@ final class Settings {
 	private ?array $values = null;
 
 	private ?array $defaults = null;
+
+	private ?Delay_Js $delay_js = null;
 
 	public function __construct( Drop_In_Manager $drop_in, Preloader $preloader, Htaccess $htaccess ) {
 		$this->drop_in   = $drop_in;
@@ -176,6 +180,91 @@ final class Settings {
 			'default' => false,
 		);
 
+		$schema[ File_Optimizer::SETTING_DEFER_JS_EXCLUDED ] = array(
+			'tab'               => self::TAB_FILE_OPTIMIZATION,
+			'type'              => 'lines',
+			'default'           => array(),
+			'sanitize_callback' => array( self::class, 'sanitize_file_patterns' ),
+		);
+
+		$schema[ Asset_Minifier::SETTING_CSS ] = array(
+			'tab'     => self::TAB_FILE_OPTIMIZATION,
+			'type'    => 'bool',
+			'default' => false,
+		);
+
+		$schema[ Asset_Minifier::SETTING_CSS_EXCLUDED ] = array(
+			'tab'               => self::TAB_FILE_OPTIMIZATION,
+			'type'              => 'lines',
+			'default'           => array(),
+			'sanitize_callback' => array( self::class, 'sanitize_file_patterns' ),
+		);
+
+		$schema[ Asset_Minifier::SETTING_JS ] = array(
+			'tab'     => self::TAB_FILE_OPTIMIZATION,
+			'type'    => 'bool',
+			'default' => false,
+		);
+
+		$schema[ Asset_Minifier::SETTING_JS_EXCLUDED ] = array(
+			'tab'               => self::TAB_FILE_OPTIMIZATION,
+			'type'              => 'lines',
+			'default'           => array(),
+			'sanitize_callback' => array( self::class, 'sanitize_file_patterns' ),
+		);
+
+		$schema[ Delay_Js::SETTING_ENABLED ] = array(
+			'tab'     => self::TAB_FILE_OPTIMIZATION,
+			'type'    => 'bool',
+			'default' => false,
+		);
+
+		$schema[ Delay_Js::SETTING_AUTO ] = array(
+			'tab'     => self::TAB_FILE_OPTIMIZATION,
+			'type'    => 'bool',
+			'default' => true,
+		);
+
+		$schema[ Delay_Js::SETTING_SERVICES ] = array(
+			'tab'     => self::TAB_FILE_OPTIMIZATION,
+			'type'    => 'multiselect',
+			'default' => array(),
+			'choices' => $this->get_delay_js()->get_service_choices(),
+		);
+
+		$schema[ Delay_Js::SETTING_SAFE_MODE ] = array(
+			'tab'     => self::TAB_FILE_OPTIMIZATION,
+			'type'    => 'bool',
+			'default' => false,
+		);
+
+		$schema[ Delay_Js::SETTING_TIMEOUT ] = array(
+			'tab'     => self::TAB_FILE_OPTIMIZATION,
+			'type'    => 'int',
+			'default' => 0,
+			'min'     => 0,
+			'max'     => 60,
+		);
+
+		$schema[ Delay_Js::SETTING_EXCLUSIONS ] = array(
+			'tab'               => self::TAB_FILE_OPTIMIZATION,
+			'type'              => 'lines',
+			'default'           => array(),
+			'sanitize_callback' => array( Delay_Js::class, 'sanitize_patterns' ),
+		);
+
+		$schema[ File_Optimizer::SETTING_REMOVE_EMOJIS ] = array(
+			'tab'     => self::TAB_FILE_OPTIMIZATION,
+			'type'    => 'bool',
+			'default' => false,
+		);
+
+		$schema[ File_Optimizer::SETTING_REMOVE_JQUERY_MIGRATE ] = array(
+			'tab'     => self::TAB_FILE_OPTIMIZATION,
+			'type'    => 'bool',
+			'default' => false,
+		);
+
 		$schema[ Lazy_Load::SETTING_IMAGES ] = array(
 			'tab'     => self::TAB_MEDIA,
 			'type'    => 'bool',
@@ -288,7 +377,7 @@ final class Settings {
 
 		add_settings_section(
 			'o2r_file_delivery',
-			__( 'Entrega de CSS e JavaScript', 'o2-rocket' ),
+			__( 'Geral', 'o2-rocket' ),
 			array( $this, 'render_file_optimization_section' ),
 			$page
 		);
@@ -307,17 +396,232 @@ final class Settings {
 			)
 		);
 
+		add_settings_section(
+			'o2r_file_css',
+			__( 'CSS', 'o2-rocket' ),
+			null,
+			$page
+		);
+
+		add_settings_field(
+			Asset_Minifier::SETTING_CSS,
+			__( 'Minificar CSS', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_file_css',
+			array(
+				'label_for'   => 'o2r-minify-css',
+				'key'         => Asset_Minifier::SETTING_CSS,
+				'label'       => __( 'Remover espaços e comentários dos arquivos CSS do site', 'o2-rocket' ),
+				'description' => __( 'Gera cópias menores em wp-content/cache/o2-rocket/min/ (os originais não mudam). Caminhos de imagens e fontes são corrigidos e as fontes ganham font-display: swap. Arquivos de outros domínios ficam como estão.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Asset_Minifier::SETTING_CSS_EXCLUDED,
+			__( 'CSS que não deve ser minificado', 'o2-rocket' ),
+			array( $this, 'render_textarea' ),
+			$page,
+			'o2r_file_css',
+			array(
+				'label_for'   => 'o2r-minify-css-excluded',
+				'key'         => Asset_Minifier::SETTING_CSS_EXCLUDED,
+				'rows'        => 3,
+				'placeholder' => "/wp-content/plugins/meu-plugin/estilo.css\nmeu-tema/assets/css/",
+				'description' => __( 'Trecho da URL do arquivo, um por linha.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_section(
+			'o2r_file_js',
+			__( 'JavaScript', 'o2-rocket' ),
+			null,
+			$page
+		);
+
+		add_settings_field(
+			Asset_Minifier::SETTING_JS,
+			__( 'Minificar JavaScript', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_file_js',
+			array(
+				'label_for'   => 'o2r-minify-js',
+				'key'         => Asset_Minifier::SETTING_JS,
+				'label'       => __( 'Remover espaços e comentários dos arquivos JavaScript do site', 'o2-rocket' ),
+				'description' => __( 'Arquivos que já vêm minificados (.min.js), módulos ES e scripts de outros domínios ficam como estão. Se algo parar de funcionar, exclua o arquivo abaixo.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Asset_Minifier::SETTING_JS_EXCLUDED,
+			__( 'JavaScript que não deve ser minificado', 'o2-rocket' ),
+			array( $this, 'render_textarea' ),
+			$page,
+			'o2r_file_js',
+			array(
+				'label_for'   => 'o2r-minify-js-excluded',
+				'key'         => Asset_Minifier::SETTING_JS_EXCLUDED,
+				'rows'        => 3,
+				'placeholder' => '/wp-content/plugins/meu-plugin/script.js',
+				'description' => __( 'Trecho da URL do arquivo, um por linha.', 'o2-rocket' ),
+			)
+		);
+
 		add_settings_field(
 			File_Optimizer::SETTING_DEFER_JS,
 			__( 'Carregar JavaScript de forma adiada (Defer)', 'o2-rocket' ),
 			array( $this, 'render_toggle' ),
 			$page,
-			'o2r_file_delivery',
+			'o2r_file_js',
 			array(
 				'label_for'   => 'o2r-defer-js',
 				'key'         => File_Optimizer::SETTING_DEFER_JS,
 				'label'       => __( 'Executar os scripts só depois que o HTML for lido', 'o2-rocket' ),
 				'description' => __( 'O jQuery nunca é adiado, esteja ele no WordPress ou em uma CDN. Scripts com código inline anexado, e todos os scripts dos quais eles dependem, também continuam síncronos.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			File_Optimizer::SETTING_DEFER_JS_EXCLUDED,
+			__( 'JavaScript que não deve ser adiado', 'o2-rocket' ),
+			array( $this, 'render_textarea' ),
+			$page,
+			'o2r_file_js',
+			array(
+				'label_for'   => 'o2r-defer-js-excluded',
+				'key'         => File_Optimizer::SETTING_DEFER_JS_EXCLUDED,
+				'rows'        => 3,
+				'placeholder' => "meu-plugin/js/mapa.js\nhandle-do-script",
+				'description' => __( 'Trecho da URL ou handle do script, um por linha. Os scripts dos quais ele depende também deixam de ser adiados.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_section(
+			'o2r_delay_js',
+			__( 'Atrasar a execução do JavaScript', 'o2-rocket' ),
+			array( $this, 'render_delay_js_section' ),
+			$page
+		);
+
+		add_settings_field(
+			Delay_Js::SETTING_ENABLED,
+			__( 'Atrasar JavaScript', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_delay_js',
+			array(
+				'label_for'   => 'o2r-delay-js',
+				'key'         => Delay_Js::SETTING_ENABLED,
+				'label'       => __( 'Executar os scripts só na primeira interação do visitante', 'o2-rocket' ),
+				'description' => __( 'Mouse, toque, teclado ou roda do mouse disparam os scripts, na ordem original. Um clique feito antes disso é repetido quando eles terminam. Visitantes logados não são afetados.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Delay_Js::SETTING_AUTO,
+			__( 'Exclusões conhecidas', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_delay_js',
+			array(
+				'label_for'   => 'o2r-delay-js-auto',
+				'key'         => Delay_Js::SETTING_AUTO,
+				'label'       => __( 'Aplicar as exclusões conhecidas para os plugins e o tema ativos', 'o2-rocket' ),
+				'description' => __( 'Lista com mais de 400 plugins e temas (sliders, galerias, menus, formulários) cujos scripts precisam rodar sem esperar a interação.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Delay_Js::SETTING_SERVICES,
+			__( 'Serviços externos que não esperam', 'o2-rocket' ),
+			array( $this, 'render_checkboxes' ),
+			$page,
+			'o2r_delay_js',
+			array(
+				'key'         => Delay_Js::SETTING_SERVICES,
+				'choices'     => $this->get_delay_js()->get_service_choices(),
+				'description' => __( 'Marque os serviços que precisam rodar já no carregamento (ex.: Google Analytics para contar visitas sem interação).', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Delay_Js::SETTING_SAFE_MODE,
+			__( 'Modo seguro', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_delay_js',
+			array(
+				'label_for'   => 'o2r-delay-js-safe',
+				'key'         => Delay_Js::SETTING_SAFE_MODE,
+				'label'       => __( 'Atrasar só scripts de terceiros', 'o2-rocket' ),
+				'description' => __( 'jQuery, scripts em linha do WordPress e arquivos de wp-content e wp-includes rodam normalmente. Ganho menor, mas resolve quase todo conflito.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Delay_Js::SETTING_TIMEOUT,
+			__( 'Executar sem interação depois de', 'o2-rocket' ),
+			array( $this, 'render_number' ),
+			$page,
+			'o2r_delay_js',
+			array(
+				'label_for'   => 'o2r-delay-js-timeout',
+				'key'         => Delay_Js::SETTING_TIMEOUT,
+				'min'         => 0,
+				'max'         => 60,
+				'suffix'      => __( 'segundos', 'o2-rocket' ),
+				'description' => __( '0 = só com interação (melhor nota no PageSpeed). Um valor como 8 garante que análises e chats rodem mesmo para quem só lê a página.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Delay_Js::SETTING_EXCLUSIONS,
+			__( 'Scripts que não devem esperar', 'o2-rocket' ),
+			array( $this, 'render_textarea' ),
+			$page,
+			'o2r_delay_js',
+			array(
+				'label_for'   => 'o2r-delay-js-exclusions',
+				'key'         => Delay_Js::SETTING_EXCLUSIONS,
+				'rows'        => 4,
+				'placeholder' => "/wp-content/plugins/meu-slider/\nmeuSliderInit\n/jquery-?[0-9.]*(.min|.slim|.slim.min)?.js",
+				'description' => __( 'Trecho da URL do arquivo ou do código do script em linha, um por linha (aceita expressões regulares).', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_section(
+			'o2r_wp_cleanup',
+			__( 'Limpeza do WordPress', 'o2-rocket' ),
+			null,
+			$page
+		);
+
+		add_settings_field(
+			File_Optimizer::SETTING_REMOVE_EMOJIS,
+			__( 'Desativar emojis do WordPress', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_wp_cleanup',
+			array(
+				'label_for'   => 'o2r-remove-emojis',
+				'key'         => File_Optimizer::SETTING_REMOVE_EMOJIS,
+				'label'       => __( 'Remover o script e os estilos de emojis', 'o2-rocket' ),
+				'description' => __( 'Os navegadores atuais mostram emojis sozinhos. Remove uma requisição e um script em linha de todas as páginas.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			File_Optimizer::SETTING_REMOVE_JQUERY_MIGRATE,
+			__( 'Remover jQuery Migrate', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_wp_cleanup',
+			array(
+				'label_for'   => 'o2r-remove-jquery-migrate',
+				'key'         => File_Optimizer::SETTING_REMOVE_JQUERY_MIGRATE,
+				'label'       => __( 'Não carregar o jQuery Migrate no site', 'o2-rocket' ),
+				'description' => __( 'Só é necessário para scripts antigos que usam funções removidas do jQuery. O painel continua com ele. Teste o site após ativar.', 'o2-rocket' ),
 			)
 		);
 	}
@@ -887,6 +1191,77 @@ final class Settings {
 			<?php esc_html_e( 'Ajustes aplicados apenas no front-end do site. O painel, a tela de login, o Personalizador e os editores visuais não são alterados.', 'o2-rocket' ); ?>
 		</p>
 		<?php
+	}
+
+	public function render_delay_js_section(): void {
+		?>
+		<p class="o2r-muted">
+			<?php esc_html_e( 'O maior ganho no PageSpeed: nenhum script de análise, chat, anúncio ou efeito disputa o carregamento da página. O conteúdo aparece igual; os scripts rodam assim que o visitante interage.', 'o2-rocket' ); ?>
+		</p>
+		<?php
+		$items = $this->get_delay_js()->get_active_items();
+
+		if ( empty( $items ) ) {
+			return;
+		}
+		?>
+		<p class="o2r-muted">
+			<?php
+			/* translators: %s: lista de plugins/temas. */
+			echo esc_html( sprintf( __( 'Exclusões conhecidas para o que está ativo neste site: %s.', 'o2-rocket' ), implode( ', ', array_unique( array_column( $items, 'title' ) ) ) ) );
+			?>
+		</p>
+		<?php
+	}
+
+	public function render_checkboxes( array $args ): void {
+		$key     = isset( $args['key'] ) ? (string) $args['key'] : '';
+		$choices = isset( $args['choices'] ) && is_array( $args['choices'] ) ? $args['choices'] : array();
+		$current = array_map( 'strval', (array) $this->get_value( $key, array() ) );
+		?>
+		<div class="o2r-checkbox-grid">
+			<?php foreach ( $choices as $value => $label ) : ?>
+				<?php $id = 'o2r-' . $key . '-' . sanitize_key( (string) $value ); ?>
+				<div class="form-check">
+					<input
+						class="form-check-input"
+						type="checkbox"
+						id="<?php echo esc_attr( $id ); ?>"
+						name="<?php echo esc_attr( $this->get_field_name( $key ) . '[]' ); ?>"
+						value="<?php echo esc_attr( (string) $value ); ?>"
+						<?php checked( in_array( (string) $value, $current, true ) ); ?>
+					>
+					<label class="form-check-label" for="<?php echo esc_attr( $id ); ?>"><?php echo esc_html( (string) $label ); ?></label>
+				</div>
+			<?php endforeach; ?>
+		</div>
+		<?php
+		$this->render_description( $args );
+	}
+
+	// Trechos de URL ou handles, um por linha.
+	public static function sanitize_file_patterns( $value ): array {
+		$lines    = is_array( $value ) ? $value : preg_split( '/\r\n|\r|\n/', is_scalar( $value ) ? (string) $value : '' );
+		$patterns = array();
+
+		foreach ( (array) $lines as $line ) {
+			$line = is_scalar( $line ) ? trim( wp_strip_all_tags( (string) $line ) ) : '';
+			$line = (string) preg_replace( '/[^\x21-\x7E]/', '', $line );
+
+			if ( strlen( $line ) >= 3 ) {
+				$patterns[] = substr( $line, 0, 300 );
+			}
+		}
+
+		return array_slice( array_values( array_unique( $patterns ) ), 0, 500 );
+	}
+
+	private function get_delay_js(): Delay_Js {
+		if ( null === $this->delay_js ) {
+			$this->delay_js = new Delay_Js();
+		}
+
+		return $this->delay_js;
 	}
 
 	public function render_media_section(): void {

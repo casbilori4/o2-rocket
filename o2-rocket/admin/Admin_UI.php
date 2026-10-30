@@ -1764,6 +1764,14 @@ body.o2r-admin #wpbody-content > .update-nag {
 	padding-top: 0;
 	border-top: 0;
 }
+.o2r-checkbox-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+	gap: 8px 24px;
+}
+.o2r-checkbox-grid .form-check-label {
+	font-size: 14px;
+}
 .o2r-inline-fields {
 	display: flex;
 	flex-wrap: wrap;

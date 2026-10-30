@@ -8,6 +8,8 @@ namespace O2Rocket\Preload;
 use O2Rocket\Cache\Page_Cache;
 use O2Rocket\Core\Request;
 
+use function O2Rocket\script_url;
+
 defined( 'ABSPATH' ) || exit;
 
 // Pré-carrega a próxima página quando o visitante para o mouse sobre um link.
@@ -72,7 +74,7 @@ final class Link_Prefetch {
 
 		wp_enqueue_script(
 			self::SCRIPT_HANDLE,
-			plugins_url( self::SCRIPT_PATH, O2_ROCKET_FILE ),
+			script_url( self::SCRIPT_PATH ),
 			array(),
 			O2_ROCKET_VERSION,
 			array(

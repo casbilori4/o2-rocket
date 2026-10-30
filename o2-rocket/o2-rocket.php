@@ -106,7 +106,8 @@ function render_requirements_notice() {
 	}
 }
 
-// O2Rocket\Admin\ => admin/, O2Rocket\Frontend\ => public/ ("Public" é reservado no PHP 7.4), O2Rocket\ => includes/.
+// O2Rocket\Admin\ => admin/, O2Rocket\Frontend\ => public/ ("Public" é reservado no PHP 7.4),
+// O2Rocket\Vendor\* => vendor/ (bibliotecas de terceiros com namespace trocado), O2Rocket\ => includes/.
 function autoloader() {
 	static $autoloader = null;
 
@@ -117,6 +118,8 @@ function autoloader() {
 		$autoloader
 			->add_namespace( __NAMESPACE__ . '\\Admin', O2_ROCKET_ADMIN_PATH )
 			->add_namespace( __NAMESPACE__ . '\\Frontend', O2_ROCKET_PUBLIC_PATH )
+			->add_namespace( __NAMESPACE__ . '\\Vendor\\Minify', O2_ROCKET_PATH . 'vendor/matthiasmullie/minify/src/' )
+			->add_namespace( __NAMESPACE__ . '\\Vendor\\PathConverter', O2_ROCKET_PATH . 'vendor/matthiasmullie/path-converter/src/' )
 			->add_namespace( __NAMESPACE__, O2_ROCKET_INC_PATH );
 		$autoloader->register();
 	}
@@ -192,6 +195,17 @@ function atomic_write( $file, $contents, $mode = false ) {
 	}
 
 	return $written;
+}
+
+// URL de um JS do plugin: a versão .min.js, exceto com SCRIPT_DEBUG (depuração).
+function script_url( $path ) {
+	$min = preg_replace( '/\.js$/', '.min.js', $path );
+
+	if ( ( ! defined( 'SCRIPT_DEBUG' ) || ! SCRIPT_DEBUG ) && is_readable( O2_ROCKET_PATH . $min ) ) {
+		$path = $min;
+	}
+
+	return plugins_url( $path, O2_ROCKET_FILE );
 }
 
 // Sem "Deny from all": o servidor web servirá o HTML em cache direto desta pasta.
@@ -325,6 +339,9 @@ function bootstrap() {
 
 	( new Preload\Link_Prefetch( $page_cache ) )->register_hooks();
 	( new Cache\Cache_Controls( $page_cache, $preloader ) )->register_hooks();
+	( new Optimization\Html_Pipeline() )->register_hooks();
+	( new Optimization\Asset_Minifier() )->register_hooks();
+	( new Optimization\Delay_Js() )->register_hooks();
 	( new Optimization\File_Optimizer() )->register_hooks();
 	( new Media\Lazy_Load() )->register_hooks();
 
