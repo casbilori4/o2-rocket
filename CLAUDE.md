@@ -46,9 +46,16 @@
   - `Asset_Minifier` — CSS/JS locais → `wp-content/cache/o2-rocket/min/{blog_id}/{nome}-{hash}.{css|js}` (hash do caminho+mtime+tamanho+versão). Pula `.min.js`, módulos ES, `integrity`, externos, exclusões. Cópias apagadas em `o2_rocket_after_purge_all`/limpeza manual.
   - `Delay_Js` + `assets/js/delay-js.js` (em linha no `<head>`) — `<script>` vira `type="o2rocket/delayed"` (`data-o2r-src`, `data-o2r-type`); o carregador roda na primeira interação, em ordem (normais → defer; async em paralelo), emula `readyState`/`DOMContentLoaded`/`load`/`pageshow`, adia o `ready` do jQuery, troca `document.write` e repete o clique. Exclusões: `data/delay-js-exclusions.php` (padrões + 262 plugins + 153 temas + 21 serviços, das listas do WP Rocket), aplicadas automaticamente para plugins/tema ativos; serviços marcados; modo seguro; padrões do usuário (regex ou texto). `assets/js/elementor-animations.js` mostra as animações de entrada do Elementor visíveis sem esperar o JS.
   - `File_Optimizer` — remove `?ver=`, defer de JS (via WP_Scripts, com exclusões), remove emojis e jQuery Migrate (só front-end).
+- **Fontes e dicas de recurso**
+  - `Optimization\Google_Fonts` (etapa 30) — `<link>` e `@import` do Google Fonts → CSS e fontes em `wp-content/cache/o2-rocket/fonts/{blog}/google/` (UA moderno para woff2; falha volta ao Google e só tenta de novo após 1 h); `display=swap`; remove preconnect/dns-prefetch do Google quando localizado. A opção `fonts_display_swap` também decide o `font-display` do CSS minificado (filtro `o2_rocket_font_display_swap`). Fontes só saem na limpeza manual.
+  - `Media\Resource_Hints` (etapa 85) — preconnect (+dns-prefetch) e preload de fontes, manuais e automáticos (o beacon manda `resources: {fonts, origins, cors}` = pedidos antes da LCP + 1 s; coluna `extras` da tabela de LCP, DB v2). Insere logo depois do `<meta charset>`.
+- **Banco e Heartbeat**
+  - `Database\Cleaner` — revisões (manter N mais recentes), rascunhos automáticos, lixeira, spam, transients expirados ou todos, metadados órfãos, otimizar tabelas (MySQL: `SHOW TABLE STATUS` + `OPTIMIZE TABLE`, InnoDB só com >10 MB livres; SQLite: `VACUUM` pelo PDO do plugin de integração). Lotes de 200 com orçamento de tempo; AJAX "Limpar agora" repete até `done`; cron `o2_rocket_database_cleanup` diário/semanal/mensal às 03:15 do site, continua em 1 min se não acabar.
+  - `Optimization\Heartbeat` — site/painel/editor: padrão, reduzir (120 s) ou desativar (deregister do script).
+- `admin/Tools.php` — aba Ferramentas: exportar JSON (sem chaves marcadas `secret` no schema), importar (só chaves do schema via `Admin_UI::build_settings()`, mantém segredos atuais), restaurar padrões, ações rápidas, diagnóstico com texto para suporte.
 - `includes/Core/Url_Resolver.php` — URL do próprio site ↔ arquivo no disco (wp-content/plugins/uploads fora do padrão, WP em subpasta; nunca sai das pastas do WP).
 - `vendor/` — matthiasmullie/minify e path-converter (MIT) com namespace `O2Rocket\Vendor\...` (ver `vendor/README.md`); registrado no autoloader do `o2-rocket.php`.
-- `assets/js/*.min.js` — gerados a partir dos `.js` com a própria biblioteca (`script_url()` escolhe o `.min.js`, exceto com `SCRIPT_DEBUG`). Ao editar um `.js`, gerar o `.min.js` de novo (script `min-assets.php` do ambiente de teste, ou `new O2Rocket\Vendor\Minify\JS( $codigo )->minify()`).
+- `assets/js/*.min.js` — gerados a partir dos `.js` com a própria biblioteca; a primeira linha é `/*o2r:{md5 do .js}*/` e `script_path()`/`script_url()`/`inline_script()` só usam o `.min.js` se o hash bater (senão caem no `.js`; também com `SCRIPT_DEBUG`). Ao editar um `.js`, gerar o `.min.js` de novo (script `min-assets.php` do ambiente de teste: `'/*o2r:' . md5_file( $js ) . "*/\n" . ( new O2Rocket\Vendor\Minify\JS( $codigo ) )->minify()`).
 - **Mídia** (`includes/Media/`)
   - `Lazy_Load` (etapa 40) — HTML inteiro a partir do `<body>`: `<img>`, `<picture>` (sources esperam junto, `<noscript>` com o picture inteiro), iframes, fundos em `style=""` (`var(--o2r-bg-N,none)` + `data-o2r-bg`), miniatura no lugar do YouTube (`data-o2r-iframe`). Imediatas: imagens acima da dobra medidas (`o2_rocket_lazyload_eager_urls`) ou, sem medição, as 2 primeiras + o primeiro fundo; `fetchpriority=high`/`loading=eager`; classes/atributos de exclusão; padrões do usuário. `Lazy_Load::normalize_url()` compara caminhos ignorando host, query e `.webp`.
   - `Css_Background_Lazy` (etapa 38) — fundos em `<style>` e em arquivos CSS locais (inclusive a cópia minificada): `url()` de `background`/`background-image` → `var(--o2r-bg-{md5(url):10},none)`; cópia `min/{blog}/{nome}-bg-{hash}.css` + mapa `.json`; `window.o2rLazyBg=[{s:seletor,v:{var:url}}]` antes do `</body>`; fundos acima da dobra viram `:root{--o2r-bg-x:url()}` no `<head>`. Ignora `:hover`/`:focus`, pseudo-elementos observam o elemento.
@@ -85,6 +92,9 @@ Scripts em `$SCRATCHPAD/scripts/` (não versionados): `mksite.sh <nome> <porta> 
 - Beacon de LCP sem nonce (páginas em cache duram mais que um nonce): a proteção é HMAC da URL + uma gravação por URL/dispositivo + limite de 120 gravações a cada 10 min + conferência da imagem no HTML em cache.
 - Preload da LCP só quando celular e computador concordam (sem cache separado para celular) — senão um dos dois baixaria uma imagem que não usa; o `fetchpriority` vai nos dois.
 - AVIF não foi implementado: exigiria variante de cache por cabeçalho Accept ou `<picture>`; WebP já é aceito por todos os navegadores atuais.
+- Fase 4: limpeza do banco tem "transients expirados" (seguro) separado de "todos os transients" (o que o WP Rocket faz), mantém N revisões por post e limpa metadados órfãos. Nada é marcado por padrão.
+- Heartbeat desligado por padrão (quando ligado: site desativado, painel e editor reduzidos).
+- Combinar várias URLs do Google Fonts numa só não foi feito: com as fontes hospedadas localmente não há o que combinar.
 - Push para o GitHub falhou com 403 (o app do Claude não tem acesso de escrita ao repositório). Os commits ficam locais; tentar `git push -u origin claude/epic-hypatia-j4qzlg` de novo ao fim de cada fase.
 
 ## Roadmap
@@ -124,7 +134,11 @@ Fase 5 — CSS não utilizado e CSS crítico gerados no próprio servidor; CDN; 
   - [x] Beacon local de LCP/acima da dobra → preload + `fetchpriority` + exclusão do lazy load; testado no Chromium (gravou `bg-img` do herói e a página seguinte saiu com preload e `:root` do fundo).
   - [x] Miniatura do YouTube com play/autoplay.
   - [x] WebP com perda para JPEG (qualidade configurável, reprocessamento automático) e WebP também no CSS minificado.
-- [ ] Fase 4 — fontes, preconnect, banco, Heartbeat, importar/exportar
+- [x] **Fase 4 — Fontes, banco e ferramentas** (concluída)
+  - [x] Google Fonts local (`<link>` e `@import`), `display=swap`, preload de fontes (manual + automático pelo beacon), preconnect (manual + automático).
+  - [x] Limpeza do banco (9 itens, manter N revisões, órfãos, VACUUM no SQLite) com botão AJAX e agendamento.
+  - [x] Heartbeat (site/painel/editor) em aba própria.
+  - [x] Ferramentas: exportar/importar/restaurar e diagnóstico.
 - [ ] Fase 5 — RUCSS/CCSS locais, CDN, Cloudflare/Varnish/Sucuri, compatibilidade; `COMPARATIVO.md`
 
 Pendências conhecidas (reavaliar na Fase 5): cache para usuários logados (add-on do WP Rocket), servir o cache pelo mod_rewrite, limpeza do cache do host antigo após troca de domínio.

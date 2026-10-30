@@ -8,13 +8,17 @@ namespace O2Rocket\Admin;
 use O2Rocket\Cache\Cache_Controls;
 use O2Rocket\Cache\Drop_In_Manager;
 use O2Rocket\Cache\Page_Cache;
+use O2Rocket\Database\Cleaner;
 use O2Rocket\Media\Image_Dimensions;
 use O2Rocket\Media\Image_Optimizer;
 use O2Rocket\Media\Lazy_Load;
 use O2Rocket\Media\Lcp_Optimizer;
+use O2Rocket\Media\Resource_Hints;
 use O2Rocket\Optimization\Asset_Minifier;
 use O2Rocket\Optimization\Delay_Js;
 use O2Rocket\Optimization\File_Optimizer;
+use O2Rocket\Optimization\Google_Fonts;
+use O2Rocket\Optimization\Heartbeat;
 use O2Rocket\Preload\Link_Prefetch;
 use O2Rocket\Preload\Preloader;
 use O2Rocket\Server\Htaccess;
@@ -26,6 +30,8 @@ final class Settings {
 	const TAB_PAGE_CACHE        = 'page-cache';
 	const TAB_FILE_OPTIMIZATION = 'file-optimization';
 	const TAB_MEDIA             = 'media';
+	const TAB_DATABASE          = 'database';
+	const TAB_HEARTBEAT         = 'heartbeat';
 
 	private Drop_In_Manager $drop_in;
 
@@ -330,13 +336,114 @@ final class Settings {
 			'default' => false,
 		);
 
+		$schema[ Google_Fonts::SETTING_LOCAL ] = array(
+			'tab'     => self::TAB_MEDIA,
+			'type'    => 'bool',
+			'default' => false,
+		);
+
+		$schema[ Google_Fonts::SETTING_DISPLAY_SWAP ] = array(
+			'tab'     => self::TAB_MEDIA,
+			'type'    => 'bool',
+			'default' => true,
+		);
+
+		$schema[ Resource_Hints::SETTING_FONTS_PRELOAD ] = array(
+			'tab'               => self::TAB_MEDIA,
+			'type'              => 'lines',
+			'default'           => array(),
+			'sanitize_callback' => array( Resource_Hints::class, 'sanitize_font_urls' ),
+		);
+
+		$schema[ Resource_Hints::SETTING_FONTS_AUTO ] = array(
+			'tab'     => self::TAB_MEDIA,
+			'type'    => 'bool',
+			'default' => false,
+		);
+
+		$schema[ Resource_Hints::SETTING_PRECONNECT ] = array(
+			'tab'               => self::TAB_MEDIA,
+			'type'              => 'lines',
+			'default'           => array(),
+			'sanitize_callback' => array( Resource_Hints::class, 'sanitize_domains' ),
+		);
+
+		$schema[ Resource_Hints::SETTING_PRECONNECT_AUTO ] = array(
+			'tab'     => self::TAB_MEDIA,
+			'type'    => 'bool',
+			'default' => false,
+		);
+
+		foreach ( Cleaner::ITEMS as $item ) {
+			$schema[ $item ] = array(
+				'tab'     => self::TAB_DATABASE,
+				'type'    => 'bool',
+				'default' => false,
+			);
+		}
+
+		$schema[ Cleaner::SETTING_REVISIONS_KEEP ] = array(
+			'tab'     => self::TAB_DATABASE,
+			'type'    => 'int',
+			'default' => 0,
+			'min'     => 0,
+			'max'     => 100,
+		);
+
+		$schema[ Cleaner::SETTING_SCHEDULE ] = array(
+			'tab'     => self::TAB_DATABASE,
+			'type'    => 'bool',
+			'default' => false,
+		);
+
+		$schema[ Cleaner::SETTING_FREQUENCY ] = array(
+			'tab'     => self::TAB_DATABASE,
+			'type'    => 'select',
+			'default' => 'weekly',
+			'choices' => self::get_frequency_choices(),
+		);
+
+		$schema[ Heartbeat::SETTING_CONTROL ] = array(
+			'tab'     => self::TAB_HEARTBEAT,
+			'type'    => 'bool',
+			'default' => false,
+		);
+
+		foreach ( array( Heartbeat::SETTING_SITE => 'disable', Heartbeat::SETTING_ADMIN => 'reduce', Heartbeat::SETTING_EDITOR => 'reduce' ) as $key => $default ) {
+			$schema[ $key ] = array(
+				'tab'     => self::TAB_HEARTBEAT,
+				'type'    => 'select',
+				'default' => $default,
+				'choices' => self::get_heartbeat_choices(),
+			);
+		}
+
 		return $schema;
+	}
+
+	public static function get_frequency_choices(): array {
+		return array(
+			'daily'   => __( 'Diariamente', 'o2-rocket' ),
+			'weekly'  => __( 'Semanalmente', 'o2-rocket' ),
+			'monthly' => __( 'Mensalmente', 'o2-rocket' ),
+		);
+	}
+
+	public static function get_heartbeat_choices(): array {
+		return array(
+			'default' => __( 'Padrão do WordPress', 'o2-rocket' ),
+			'reduce'  => __( 'Reduzir para a cada 2 minutos', 'o2-rocket' ),
+			'disable' => __( 'Desativar', 'o2-rocket' ),
+		);
 	}
 
 	public function register_fields( Admin_UI $ui ): void {
 		$this->register_page_cache_fields( $ui );
 		$this->register_file_optimization_fields( $ui );
 		$this->register_media_fields( $ui );
+		$this->register_font_fields( $ui );
+		$this->register_database_fields( $ui );
+		$this->register_heartbeat_fields( $ui );
 	}
 
 	private function register_media_fields( Admin_UI $ui ): void {
@@ -505,6 +612,240 @@ final class Settings {
 				'description' => __( 'Vale para todo o HTML da página: conteúdo, templates do tema, srcset e imagens de fundo em CSS inline. Todos os navegadores atuais exibem WebP.', 'o2-rocket' ),
 			)
 		);
+	}
+
+	private function register_font_fields( Admin_UI $ui ): void {
+		$page = $ui->get_settings_page( self::TAB_MEDIA );
+
+		add_settings_section(
+			'o2r_fonts',
+			__( 'Fontes e conexões externas', 'o2-rocket' ),
+			array( $this, 'render_fonts_section' ),
+			$page
+		);
+
+		add_settings_field(
+			Google_Fonts::SETTING_LOCAL,
+			__( 'Hospedar o Google Fonts no site', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_fonts',
+			array(
+				'label_for'   => 'o2r-fonts-local',
+				'key'         => Google_Fonts::SETTING_LOCAL,
+				'label'       => __( 'Baixar o CSS e as fontes do Google e servi-los do próprio servidor', 'o2-rocket' ),
+				'description' => __( 'Elimina duas conexões externas (fonts.googleapis.com e fonts.gstatic.com) e não envia o IP dos visitantes ao Google (LGPD/GDPR). Os arquivos ficam em wp-content/cache/o2-rocket/fonts/; se o download falhar, a fonte continua vindo do Google.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Google_Fonts::SETTING_DISPLAY_SWAP,
+			__( 'Texto visível durante o carregamento', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_fonts',
+			array(
+				'label_for'   => 'o2r-fonts-swap',
+				'key'         => Google_Fonts::SETTING_DISPLAY_SWAP,
+				'label'       => __( 'Usar font-display: swap no Google Fonts e nos CSS minificados', 'o2-rocket' ),
+				'description' => __( 'O texto aparece na hora com a fonte do sistema e troca quando a fonte chega (recomendado pelo PageSpeed).', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Resource_Hints::SETTING_FONTS_AUTO,
+			__( 'Pré-carregar fontes automaticamente', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_fonts',
+			array(
+				'label_for'   => 'o2r-fonts-auto',
+				'key'         => Resource_Hints::SETTING_FONTS_AUTO,
+				'label'       => __( 'Preload das fontes usadas no topo de cada página', 'o2-rocket' ),
+				'description' => __( 'O mesmo beacon local da otimização da LCP informa as fontes pedidas antes do maior elemento aparecer (até 4 por página).', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Resource_Hints::SETTING_FONTS_PRELOAD,
+			__( 'Fontes para pré-carregar', 'o2-rocket' ),
+			array( $this, 'render_textarea' ),
+			$page,
+			'o2r_fonts',
+			array(
+				'label_for'   => 'o2r-fonts-preload',
+				'key'         => Resource_Hints::SETTING_FONTS_PRELOAD,
+				'rows'        => 3,
+				'placeholder' => "/wp-content/themes/meu-tema/fonts/titulos.woff2",
+				'description' => __( 'Opcional. URL ou caminho de arquivos .woff2/.woff/.ttf/.otf, um por linha, pré-carregados em todas as páginas.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Resource_Hints::SETTING_PRECONNECT_AUTO,
+			__( 'Preconnect automático', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_fonts',
+			array(
+				'label_for'   => 'o2r-preconnect-auto',
+				'key'         => Resource_Hints::SETTING_PRECONNECT_AUTO,
+				'label'       => __( 'Abrir antes a conexão com os domínios externos usados no topo da página', 'o2-rocket' ),
+				'description' => __( 'Com base no beacon local: até 5 domínios por página (CDNs, fontes, imagens externas). Scripts atrasados não contam.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Resource_Hints::SETTING_PRECONNECT,
+			__( 'Domínios para preconnect', 'o2-rocket' ),
+			array( $this, 'render_textarea' ),
+			$page,
+			'o2r_fonts',
+			array(
+				'label_for'   => 'o2r-preconnect',
+				'key'         => Resource_Hints::SETTING_PRECONNECT,
+				'rows'        => 3,
+				'placeholder' => "https://cdn.exemplo.com\nhttps://fonts.gstatic.com",
+				'description' => __( 'Opcional. Um domínio por linha, em todas as páginas (inclui dns-prefetch para navegadores antigos).', 'o2-rocket' ),
+			)
+		);
+	}
+
+	private function register_database_fields( Admin_UI $ui ): void {
+		$page  = $ui->get_settings_page( self::TAB_DATABASE );
+		$items = array(
+			Cleaner::SETTING_REVISIONS          => array( __( 'Revisões', 'o2-rocket' ), __( 'Versões antigas salvas a cada edição de posts e páginas.', 'o2-rocket' ) ),
+			Cleaner::SETTING_AUTO_DRAFTS        => array( __( 'Rascunhos automáticos', 'o2-rocket' ), __( 'Criados ao abrir o editor e nunca publicados.', 'o2-rocket' ) ),
+			Cleaner::SETTING_TRASHED_POSTS      => array( __( 'Posts na lixeira', 'o2-rocket' ), __( 'Exclui definitivamente (não dá para restaurar).', 'o2-rocket' ) ),
+			Cleaner::SETTING_SPAM_COMMENTS      => array( __( 'Comentários de spam', 'o2-rocket' ), '' ),
+			Cleaner::SETTING_TRASHED_COMMENTS   => array( __( 'Comentários na lixeira', 'o2-rocket' ), '' ),
+			Cleaner::SETTING_EXPIRED_TRANSIENTS => array( __( 'Transients expirados', 'o2-rocket' ), __( 'Dados temporários vencidos. Seguro.', 'o2-rocket' ) ),
+			Cleaner::SETTING_ALL_TRANSIENTS     => array( __( 'Todos os transients', 'o2-rocket' ), __( 'Inclui os válidos: plugins recriam quando precisam, mas a primeira visita depois pode ficar mais lenta.', 'o2-rocket' ) ),
+			Cleaner::SETTING_ORPHAN_META        => array( __( 'Metadados órfãos', 'o2-rocket' ), __( 'Metadados de posts, comentários e termos que não existem mais.', 'o2-rocket' ) ),
+			Cleaner::SETTING_OPTIMIZE_TABLES    => array( __( 'Otimizar tabelas', 'o2-rocket' ), Cleaner::is_sqlite() ? __( 'SQLite: compacta o arquivo do banco (VACUUM).', 'o2-rocket' ) : __( 'Recupera o espaço livre das tabelas do site (OPTIMIZE TABLE).', 'o2-rocket' ) ),
+		);
+
+		add_settings_section(
+			'o2r_database',
+			__( 'Limpeza', 'o2-rocket' ),
+			array( $this, 'render_database_section' ),
+			$page
+		);
+
+		foreach ( $items as $key => $item ) {
+			add_settings_field(
+				$key,
+				$item[0],
+				array( $this, 'render_toggle' ),
+				$page,
+				'o2r_database',
+				array(
+					'label_for'   => 'o2r-' . str_replace( '_', '-', $key ),
+					'key'         => $key,
+					'label'       => __( 'Incluir na limpeza', 'o2-rocket' ),
+					'description' => $item[1],
+				)
+			);
+
+			if ( Cleaner::SETTING_REVISIONS === $key ) {
+				add_settings_field(
+					Cleaner::SETTING_REVISIONS_KEEP,
+					__( 'Revisões a manter por post', 'o2-rocket' ),
+					array( $this, 'render_number' ),
+					$page,
+					'o2r_database',
+					array(
+						'label_for'   => 'o2r-database-revisions-keep',
+						'key'         => Cleaner::SETTING_REVISIONS_KEEP,
+						'min'         => 0,
+						'max'         => 100,
+						'suffix'      => __( 'mais recentes', 'o2-rocket' ),
+						'description' => __( '0 apaga todas. Com 3, cada post continua com as 3 últimas versões para desfazer alterações.', 'o2-rocket' ),
+					)
+				);
+			}
+		}
+
+		add_settings_section(
+			'o2r_database_schedule',
+			__( 'Agendamento', 'o2-rocket' ),
+			null,
+			$page
+		);
+
+		add_settings_field(
+			Cleaner::SETTING_SCHEDULE,
+			__( 'Limpeza automática', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_database_schedule',
+			array(
+				'label_for'   => 'o2r-database-schedule',
+				'key'         => Cleaner::SETTING_SCHEDULE,
+				'label'       => __( 'Limpar os itens marcados de tempos em tempos', 'o2-rocket' ),
+				'description' => __( 'Roda de madrugada pelo WP-Cron, em lotes curtos.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Cleaner::SETTING_FREQUENCY,
+			__( 'Frequência', 'o2-rocket' ),
+			array( $this, 'render_select' ),
+			$page,
+			'o2r_database_schedule',
+			array(
+				'label_for' => 'o2r-database-frequency',
+				'key'       => Cleaner::SETTING_FREQUENCY,
+				'choices'   => self::get_frequency_choices(),
+				'default'   => 'weekly',
+			)
+		);
+	}
+
+	private function register_heartbeat_fields( Admin_UI $ui ): void {
+		$page = $ui->get_settings_page( self::TAB_HEARTBEAT );
+
+		add_settings_section(
+			'o2r_heartbeat',
+			__( 'Heartbeat API', 'o2-rocket' ),
+			array( $this, 'render_heartbeat_section' ),
+			$page
+		);
+
+		add_settings_field(
+			Heartbeat::SETTING_CONTROL,
+			__( 'Controlar a Heartbeat', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_heartbeat',
+			array(
+				'label_for' => 'o2r-heartbeat-control',
+				'key'       => Heartbeat::SETTING_CONTROL,
+				'label'     => __( 'Aplicar as regras abaixo', 'o2-rocket' ),
+			)
+		);
+
+		$places = array(
+			Heartbeat::SETTING_SITE   => array( __( 'No site', 'o2-rocket' ), __( 'Visitantes logados navegando no site. Quase nenhum tema precisa.', 'o2-rocket' ) ),
+			Heartbeat::SETTING_ADMIN  => array( __( 'No painel', 'o2-rocket' ), __( 'Telas do painel fora do editor (avisos de sessão expirada, painéis em tempo real).', 'o2-rocket' ) ),
+			Heartbeat::SETTING_EDITOR => array( __( 'No editor', 'o2-rocket' ), __( 'Salvamento automático e aviso de "outra pessoa está editando". Desativar aqui desliga os dois.', 'o2-rocket' ) ),
+		);
+
+		foreach ( $places as $key => $place ) {
+			add_settings_field(
+				$key,
+				$place[0],
+				array( $this, 'render_select' ),
+				$page,
+				'o2r_heartbeat',
+				array(
+					'label_for'   => 'o2r-' . str_replace( '_', '-', $key ),
+					'key'         => $key,
+					'choices'     => self::get_heartbeat_choices(),
+					'description' => $place[1],
+				)
+			);
+		}
 	}
 
 	private function register_file_optimization_fields( Admin_UI $ui ): void {
@@ -1404,6 +1745,76 @@ final class Settings {
 		<p class="o2r-muted">
 			<?php esc_html_e( 'Usa a API nativa IntersectionObserver do navegador (script de cerca de 3 KB, sem jQuery). Sem JavaScript, uma cópia original de cada imagem e iframe é exibida via <noscript>.', 'o2-rocket' ); ?>
 		</p>
+		<?php
+	}
+
+	public function render_fonts_section(): void {
+		?>
+		<p class="o2r-muted">
+			<?php esc_html_e( 'Fontes atrasam o texto (FOUT/FOIT) e cada domínio externo custa uma conexão nova antes do primeiro byte.', 'o2-rocket' ); ?>
+		</p>
+		<?php
+	}
+
+	public function render_heartbeat_section(): void {
+		?>
+		<p class="o2r-muted">
+			<?php esc_html_e( 'Com o painel aberto, o WordPress chama o admin-ajax.php a cada 15 a 60 segundos. Em hospedagens compartilhadas isso consome CPU à toa.', 'o2-rocket' ); ?>
+		</p>
+		<?php
+	}
+
+	public function render_database_section(): void {
+		$cleaner = new Cleaner();
+		$counts  = $cleaner->count_all();
+		$last    = get_option( Cleaner::LAST_OPTION, array() );
+		$labels  = array(
+			Cleaner::SETTING_REVISIONS          => __( 'Revisões', 'o2-rocket' ),
+			Cleaner::SETTING_AUTO_DRAFTS        => __( 'Rascunhos automáticos', 'o2-rocket' ),
+			Cleaner::SETTING_TRASHED_POSTS      => __( 'Posts na lixeira', 'o2-rocket' ),
+			Cleaner::SETTING_SPAM_COMMENTS      => __( 'Comentários de spam', 'o2-rocket' ),
+			Cleaner::SETTING_TRASHED_COMMENTS   => __( 'Comentários na lixeira', 'o2-rocket' ),
+			Cleaner::SETTING_EXPIRED_TRANSIENTS => __( 'Transients expirados', 'o2-rocket' ),
+			Cleaner::SETTING_ALL_TRANSIENTS     => __( 'Transients (todos)', 'o2-rocket' ),
+			Cleaner::SETTING_ORPHAN_META        => __( 'Metadados órfãos', 'o2-rocket' ),
+			Cleaner::SETTING_OPTIMIZE_TABLES    => Cleaner::is_sqlite() ? __( 'Banco a compactar', 'o2-rocket' ) : __( 'Tabelas com espaço livre', 'o2-rocket' ),
+		);
+		?>
+		<p class="o2r-muted">
+			<?php esc_html_e( 'Faça um backup antes da primeira limpeza. Itens marcados abaixo entram na limpeza manual e na automática.', 'o2-rocket' ); ?>
+		</p>
+		<div
+			class="o2r-db"
+			data-o2r-db
+			data-ajax-url="<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>"
+			data-action="<?php echo esc_attr( Cleaner::AJAX_ACTION ); ?>"
+			data-nonce="<?php echo esc_attr( wp_create_nonce( Cleaner::AJAX_ACTION ) ); ?>"
+			data-label-running="<?php esc_attr_e( 'Limpando…', 'o2-rocket' ); ?>"
+			data-label-done="<?php /* translators: %s: quantidade de itens. */ esc_attr_e( 'Concluído: %s itens removidos.', 'o2-rocket' ); ?>"
+			data-label-error="<?php esc_attr_e( 'A limpeza foi interrompida. Tente novamente.', 'o2-rocket' ); ?>"
+		>
+			<div class="o2r-list">
+				<?php foreach ( $labels as $key => $label ) : ?>
+					<div class="o2r-list-row">
+						<span class="o2r-list-title"><?php echo esc_html( $label ); ?></span>
+						<span data-o2r-db-count="<?php echo esc_attr( $key ); ?>"><?php echo Admin_UI::badge_html( number_format_i18n( (int) $counts[ $key ] ), $counts[ $key ] > 0 ? 'warning' : 'success' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escapado em badge_html(). ?></span>
+					</div>
+				<?php endforeach; ?>
+			</div>
+			<div class="o2r-actions">
+				<button type="button" class="o2r-button" data-o2r-db-run><?php esc_html_e( 'Limpar agora', 'o2-rocket' ); ?></button>
+				<span class="o2r-muted" data-o2r-db-status>
+					<?php
+					if ( is_array( $last ) && ! empty( $last['time'] ) ) {
+						/* translators: 1: tempo decorrido, 2: itens removidos. */
+						echo esc_html( sprintf( __( 'Última limpeza há %1$s (%2$s itens).', 'o2-rocket' ), human_time_diff( (int) $last['time'] ), number_format_i18n( (int) $last['deleted'] ) ) );
+					} else {
+						esc_html_e( 'Usa os itens marcados e salvos abaixo.', 'o2-rocket' );
+					}
+					?>
+				</span>
+			</div>
+		</div>
 		<?php
 	}
 

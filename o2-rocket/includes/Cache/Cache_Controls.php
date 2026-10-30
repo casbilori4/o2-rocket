@@ -160,7 +160,7 @@ final class Cache_Controls {
 				break;
 		}
 
-		$this->add_notice( $message );
+		self::add_notice( $message );
 
 		$redirect = wp_get_referer();
 
@@ -195,7 +195,7 @@ final class Cache_Controls {
 		printf( '<div class="notice notice-success is-dismissible"><p><strong>%1$s</strong> %2$s</p></div>', esc_html__( 'O² Rocket:', 'o2-rocket' ), esc_html( $message ) );
 	}
 
-	public function add_notice( string $message ): void {
+	public static function add_notice( string $message ): void {
 		set_transient( self::NOTICE_PREFIX . get_current_user_id(), $message, MINUTE_IN_SECONDS );
 	}
 

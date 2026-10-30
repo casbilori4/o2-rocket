@@ -115,6 +115,48 @@
 		}).slice(0, MAX_ABOVE);
 	}
 
+	// Fontes e domínios externos pedidos antes da LCP (+1 s): os que valem preload e preconnect.
+	function resources() {
+		var limit = (lcpEntry ? lcpEntry.startTime : 0) + 1000;
+		var fonts = [];
+		var origins = [];
+		var cors = [];
+
+		if (!window.performance || !performance.getEntriesByType) {
+			return { fonts: fonts, origins: origins, cors: cors };
+		}
+
+		Array.prototype.forEach.call(performance.getEntriesByType('resource'), function (entry) {
+			if (entry.startTime > limit || !/^https?:/i.test(entry.name)) {
+				return;
+			}
+
+			var origin;
+
+			try {
+				origin = new URL(entry.name).origin;
+			} catch (error) {
+				return;
+			}
+
+			var isFont = /\.(?:woff2?|ttf|otf)(?:[?#]|$)/i.test(entry.name);
+
+			if (isFont && fonts.length < 8 && fonts.indexOf(entry.name) === -1) {
+				fonts.push(entry.name);
+			}
+
+			if (origin !== window.location.origin && origins.indexOf(origin) === -1 && origins.length < 10) {
+				origins.push(origin);
+			}
+
+			if (origin !== window.location.origin && isFont && cors.indexOf(origin) === -1) {
+				cors.push(origin);
+			}
+		});
+
+		return { fonts: fonts, origins: origins, cors: cors };
+	}
+
 	function send() {
 		// Página rolada ou em segundo plano: a medição não representa o topo da página.
 		if (window.pageYOffset > 0 || document.visibilityState === 'hidden') {
@@ -127,7 +169,7 @@
 		body.append('mode', config.mode);
 		body.append('key', config.key);
 		body.append('device', (window.innerWidth || document.documentElement.clientWidth) < 768 ? 'mobile' : 'desktop');
-		body.append('data', JSON.stringify({ lcp: describe(lcpEntry), above: aboveTheFold() }));
+		body.append('data', JSON.stringify({ lcp: describe(lcpEntry), above: aboveTheFold(), resources: resources() }));
 
 		if (!navigator.sendBeacon || !navigator.sendBeacon(config.ajax, body)) {
 			window.fetch(config.ajax, { method: 'POST', body: body, credentials: 'omit', keepalive: true }).catch(function () {});

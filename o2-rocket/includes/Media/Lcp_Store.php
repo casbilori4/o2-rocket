@@ -10,7 +10,7 @@ defined( 'ABSPATH' ) || exit;
 // Medições do beacon por URL e dispositivo: imagem LCP e imagens acima da dobra (tabela própria por site).
 final class Lcp_Store {
 
-	const DB_VERSION        = '1';
+	const DB_VERSION        = '2';
 	const DB_VERSION_OPTION = 'o2_rocket_lcp_db_version';
 
 	public static function table(): string {
@@ -39,6 +39,7 @@ final class Lcp_Store {
 				device varchar(10) NOT NULL default 'desktop',
 				lcp longtext NOT NULL,
 				above_fold longtext NOT NULL,
+				extras longtext NOT NULL,
 				created datetime NOT NULL default '0000-00-00 00:00:00',
 				PRIMARY KEY  (id),
 				UNIQUE KEY url_hash (url_hash)
@@ -88,16 +89,19 @@ final class Lcp_Store {
 		$hashes = array( self::key( $url, 'desktop' ), self::key( $url, 'mobile' ) );
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-		$rows   = (array) $wpdb->get_results( $wpdb->prepare( "SELECT device, lcp, above_fold FROM {$table} WHERE url_hash IN (%s, %s)", $hashes[0], $hashes[1] ) );
+		// SELECT * tolera a tabela da versão anterior (sem extras) até o painel atualizar o esquema.
+		$rows   = (array) $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE url_hash IN (%s, %s)", $hashes[0], $hashes[1] ) );
 		$result = array();
 
 		foreach ( $rows as $row ) {
-			$lcp   = json_decode( (string) $row->lcp, true );
-			$above = json_decode( (string) $row->above_fold, true );
+			$lcp    = json_decode( (string) $row->lcp, true );
+			$above  = json_decode( (string) $row->above_fold, true );
+			$extras = isset( $row->extras ) ? json_decode( (string) $row->extras, true ) : array();
 
 			$result[ (string) $row->device ] = array(
 				'lcp'        => is_array( $lcp ) ? $lcp : array(),
 				'above_fold' => is_array( $above ) ? $above : array(),
+				'extras'     => is_array( $extras ) ? $extras : array(),
 			);
 		}
 
@@ -106,7 +110,7 @@ final class Lcp_Store {
 		return $result;
 	}
 
-	public function add( string $url, string $device, array $lcp, array $above_fold ): bool {
+	public function add( string $url, string $device, array $lcp, array $above_fold, array $extras = array() ): bool {
 		global $wpdb;
 
 		if ( ! $this->is_installed() && ! $this->install() ) {
@@ -122,9 +126,10 @@ final class Lcp_Store {
 				'device'     => $device,
 				'lcp'        => (string) wp_json_encode( $lcp, JSON_UNESCAPED_SLASHES ),
 				'above_fold' => (string) wp_json_encode( array_values( $above_fold ), JSON_UNESCAPED_SLASHES ),
+				'extras'     => (string) wp_json_encode( $extras, JSON_UNESCAPED_SLASHES ),
 				'created'    => current_time( 'mysql', true ),
 			),
-			array( '%s', '%s', '%s', '%s', '%s', '%s' )
+			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
 		);
 	}
 

@@ -53,11 +53,14 @@ final class Lcp_Optimizer {
 		add_action( 'o2_rocket_after_purge_all', array( $this, 'clear' ) );
 		add_action( 'o2_rocket_after_purge_urls', array( $this, 'on_purge_urls' ) );
 
-		if ( is_admin() || ! $this->is_enabled() ) {
+		if ( is_admin() || ! $this->is_beacon_enabled() ) {
 			return;
 		}
 
-		add_filter( 'o2_rocket_lazyload_eager_urls', array( $this, 'filter_eager_urls' ) );
+		if ( $this->is_enabled() ) {
+			add_filter( 'o2_rocket_lazyload_eager_urls', array( $this, 'filter_eager_urls' ) );
+		}
+
 		add_filter( Html_Pipeline::FILTER, array( $this, 'optimize' ), self::PIPELINE_PRIORITY );
 	}
 
@@ -67,8 +70,15 @@ final class Lcp_Optimizer {
 		return is_array( $stored ) && ! empty( $stored[ self::SETTING_ENABLED ] );
 	}
 
+	// O beacon também alimenta o preload automático de fontes e o preconnect automático.
+	public function is_beacon_enabled(): bool {
+		$stored = get_option( O2_ROCKET_OPTION, array() );
+
+		return $this->is_enabled() || ( is_array( $stored ) && ( ! empty( $stored[ Resource_Hints::SETTING_FONTS_AUTO ] ) || ! empty( $stored[ Resource_Hints::SETTING_PRECONNECT_AUTO ] ) ) );
+	}
+
 	public function maybe_install(): void {
-		if ( $this->is_enabled() && ! $this->store->is_installed() ) {
+		if ( $this->is_beacon_enabled() && ( ! $this->store->is_installed() ) ) {
 			$this->store->install();
 		}
 	}
@@ -122,11 +132,11 @@ final class Lcp_Optimizer {
 			$html = $this->maybe_add_beacon( $html );
 		}
 
-		return empty( $measurements ) ? $html : $this->apply_hints( $html, $measurements );
+		return empty( $measurements ) || ! $this->is_enabled() ? $html : $this->apply_hints( $html, $measurements );
 	}
 
 	public function handle_beacon(): void {
-		if ( ! $this->is_enabled() ) {
+		if ( ! $this->is_beacon_enabled() ) {
 			wp_send_json_error( null, 403 );
 		}
 
@@ -159,12 +169,19 @@ final class Lcp_Optimizer {
 		$data  = json_decode( $raw, true );
 		$lcp   = is_array( $data ) && isset( $data['lcp'] ) && is_array( $data['lcp'] ) ? $this->sanitize_lcp( $data['lcp'] ) : array( 'type' => 'none' );
 		$above = is_array( $data ) && isset( $data['above'] ) && is_array( $data['above'] ) ? $this->sanitize_urls( $data['above'] ) : array();
+		$found = is_array( $data ) && isset( $data['resources'] ) && is_array( $data['resources'] ) ? $data['resources'] : array();
+
+		$extras = array(
+			'fonts'   => isset( $found['fonts'] ) && is_array( $found['fonts'] ) ? array_slice( $this->sanitize_urls( $found['fonts'] ), 0, 8 ) : array(),
+			'origins' => isset( $found['origins'] ) && is_array( $found['origins'] ) ? self::sanitize_origins( $found['origins'] ) : array(),
+			'cors'    => isset( $found['cors'] ) && is_array( $found['cors'] ) ? self::sanitize_origins( $found['cors'] ) : array(),
+		);
 
 		if ( ! $this->is_plausible( $url, $device, $lcp ) ) {
 			wp_send_json_error( null, 422 );
 		}
 
-		if ( ! $this->store->add( $url, $device, $lcp, $above ) ) {
+		if ( ! $this->store->add( $url, $device, $lcp, $above, $extras ) ) {
 			wp_send_json_error( null, 500 );
 		}
 
@@ -180,8 +197,21 @@ final class Lcp_Optimizer {
 		return substr( hash_hmac( 'sha256', 'o2r-beacon|' . untrailingslashit( $url ) . '|' . $mode, wp_salt( 'nonce' ) ), 0, 32 );
 	}
 
+	// "https://host[:porta]" apenas (sem caminho), no máximo 10.
+	public static function sanitize_origins( array $origins ): array {
+		$clean = array();
+
+		foreach ( array_slice( $origins, 0, 10 ) as $origin ) {
+			if ( is_string( $origin ) && preg_match( '#^https?://[a-z0-9.\-]+(?::\d{1,5})?$#i', trim( $origin ) ) ) {
+				$clean[] = strtolower( trim( $origin ) );
+			}
+		}
+
+		return array_values( array_unique( $clean ) );
+	}
+
 	// Medições que valem para esta resposta: o dispositivo da variante (cache separado) ou todos.
-	private function get_measurements(): array {
+	public function get_measurements(): array {
 		if ( null !== $this->measurements ) {
 			return $this->measurements;
 		}

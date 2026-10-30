@@ -197,28 +197,53 @@ function atomic_write( $file, $contents, $mode = false ) {
 	return $written;
 }
 
-// URL de um JS do plugin: a versão .min.js, exceto com SCRIPT_DEBUG (depuração).
-function script_url( $path ) {
-	$min = preg_replace( '/\.js$/', '.min.js', $path );
+// Caminho relativo do JS a usar: o .min.js, exceto com SCRIPT_DEBUG ou se ele não corresponder ao .js atual
+// (a primeira linha do .min.js guarda o md5 do .js de origem: "/*o2r:md5*/").
+function script_path( $path ) {
+	static $resolved = array();
 
-	if ( ( ! defined( 'SCRIPT_DEBUG' ) || ! SCRIPT_DEBUG ) && is_readable( O2_ROCKET_PATH . $min ) ) {
-		$path = $min;
+	if ( isset( $resolved[ $path ] ) ) {
+		return $resolved[ $path ];
 	}
 
-	return plugins_url( $path, O2_ROCKET_FILE );
+	$min    = (string) preg_replace( '/\.js$/', '.min.js', $path );
+	$source = O2_ROCKET_PATH . $path;
+	$target = O2_ROCKET_PATH . $min;
+
+	$resolved[ $path ] = $path;
+
+	if ( ( defined( 'SCRIPT_DEBUG' ) && SCRIPT_DEBUG ) || ! is_readable( $target ) ) {
+		return $path;
+	}
+
+	if ( ! is_readable( $source ) ) {
+		$resolved[ $path ] = $min;
+
+		return $min;
+	}
+
+	$head = (string) file_get_contents( $target, false, null, 0, 48 ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+
+	if ( preg_match( '#^/\*o2r:([0-9a-f]{32})\*/#', $head, $match ) && md5_file( $source ) === $match[1] ) {
+		$resolved[ $path ] = $min;
+	}
+
+	return $resolved[ $path ];
 }
 
-// Conteúdo de um JS do plugin para ir em linha na página (.min.js quando existe; "</script" escapado).
-function inline_script( $base ) {
-	foreach ( array( '.min.js', '.js' ) as $suffix ) {
-		$file = O2_ROCKET_PATH . $base . $suffix;
+function script_url( $path ) {
+	return plugins_url( script_path( $path ), O2_ROCKET_FILE );
+}
 
-		if ( is_readable( $file ) ) {
-			return str_replace( '</script', '<\/script', trim( (string) file_get_contents( $file ) ) ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
-		}
+// Conteúdo de um JS do plugin para ir em linha na página ("</script" escapado).
+function inline_script( $base ) {
+	$file = O2_ROCKET_PATH . script_path( $base . '.js' );
+
+	if ( ! is_readable( $file ) ) {
+		return '';
 	}
 
-	return '';
+	return str_replace( '</script', '<\/script', trim( (string) file_get_contents( $file ) ) ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
 }
 
 // Sem "Deny from all": o servidor web servirá o HTML em cache direto desta pasta.
@@ -362,13 +387,23 @@ function bootstrap() {
 
 	( new Media\Css_Background_Lazy( $lazy_load ) )->register_hooks();
 	( new Media\Image_Dimensions() )->register_hooks();
-	( new Media\Lcp_Optimizer( new Media\Lcp_Store(), $page_cache ) )->register_hooks();
+
+	$lcp = new Media\Lcp_Optimizer( new Media\Lcp_Store(), $page_cache );
+	$lcp->register_hooks();
+
+	( new Media\Resource_Hints( $lcp ) )->register_hooks();
+	( new Optimization\Google_Fonts() )->register_hooks();
+	( new Optimization\Heartbeat() )->register_hooks();
+	( new Database\Cleaner() )->register_hooks();
 
 	$image_optimizer = new Media\Image_Optimizer();
 	$image_optimizer->register_hooks();
 
 	if ( is_admin() ) {
-		( new Admin\Admin_UI() )->register_hooks();
+		$admin_ui = new Admin\Admin_UI();
+		$admin_ui->register_hooks();
+
+		( new Admin\Tools( $admin_ui, $page_cache, $drop_in, $preloader, $htaccess ) )->register_hooks();
 		( new Admin\Settings( $drop_in, $preloader, $htaccess ) )->register_hooks();
 		( new Admin\Dashboard( $page_cache, $drop_in ) )->register_hooks();
 		( new Admin\Media_Dashboard() )->register_hooks();

@@ -153,6 +153,12 @@ final class Admin_UI {
 				'description' => __( 'Limpeza de revisões, rascunhos, transients e otimização de tabelas.', 'o2-rocket' ),
 				'type'        => 'settings',
 			),
+			'heartbeat'         => array(
+				'title'       => __( 'Heartbeat', 'o2-rocket' ),
+				'group'       => $group_optimization,
+				'description' => __( 'Frequência das requisições automáticas da Heartbeat API no site, no painel e no editor.', 'o2-rocket' ),
+				'type'        => 'settings',
+			),
 			'tools'             => array(
 				'title'       => __( 'Ferramentas', 'o2-rocket' ),
 				'group'       => $group_system,
@@ -246,6 +252,32 @@ final class Admin_UI {
 		}
 
 		return $output;
+	}
+
+	// Importação e restauração: só chaves do schema, cada uma sanitizada; o que faltar volta ao padrão.
+	public function build_settings( array $values ): array {
+		$output = $this->get_default_settings();
+
+		foreach ( $this->get_settings_schema() as $key => $field ) {
+			if ( is_array( $field ) && array_key_exists( $key, $values ) ) {
+				$output[ $key ] = $this->sanitize_value( $values[ $key ], $field );
+			}
+		}
+
+		return $output;
+	}
+
+	// Chaves marcadas como secretas no schema (tokens de API): ficam fora da exportação.
+	public function get_secret_keys(): array {
+		$keys = array();
+
+		foreach ( $this->get_settings_schema() as $key => $field ) {
+			if ( is_array( $field ) && ! empty( $field['secret'] ) ) {
+				$keys[] = (string) $key;
+			}
+		}
+
+		return $keys;
 	}
 
 	// Badge de status compartilhado pelas abas (success, warning, danger, neutral).
@@ -1753,6 +1785,15 @@ body.o2r-admin #wpbody-content > .update-nag {
 	align-items: center;
 	gap: 12px 16px;
 }
+.o2r-actions--spaced {
+	margin-top: 20px;
+}
+.o2r-import .form-control {
+	max-width: 420px;
+}
+.o2r-section-intro .o2r-db > * + * {
+	margin-top: 16px;
+}
 .o2r-section-intro .o2r-preload > * + * {
 	margin-top: 16px;
 }
@@ -2034,6 +2075,58 @@ CSS;
 		};
 
 		window.setTimeout(poll, 1500);
+	}
+
+	// Limpeza do banco: lotes de ~15 s por requisição até o servidor responder done.
+	const db = document.querySelector('[data-o2r-db]');
+
+	if (db) {
+		const button = db.querySelector('[data-o2r-db-run]');
+		const status = db.querySelector('[data-o2r-db-status]');
+		const locale = document.documentElement.lang || 'pt-BR';
+		const idle = button.textContent;
+		let removed = 0;
+
+		const render = (counts) => {
+			Object.keys(counts).forEach((key) => {
+				const badge = db.querySelector('[data-o2r-db-count="' + key + '"] .o2r-badge');
+
+				if (badge) {
+					badge.textContent = Number(counts[key]).toLocaleString(locale);
+					badge.className = 'o2r-badge ' + (counts[key] > 0 ? 'o2r-badge--warning' : 'o2r-badge--success');
+				}
+			});
+		};
+
+		const finish = (message) => {
+			button.disabled = false;
+			button.textContent = idle;
+			status.textContent = message;
+		};
+
+		const step = () => {
+			post(db)
+				.then((data) => {
+					removed += data.deleted;
+					render(data.counts);
+
+					if (!data.done) {
+						step();
+						return;
+					}
+
+					finish(db.dataset.labelDone.replace('%s', removed.toLocaleString(locale)));
+				})
+				.catch((error) => finish(error && error.message ? error.message : db.dataset.labelError));
+		};
+
+		button.addEventListener('click', () => {
+			removed = 0;
+			button.disabled = true;
+			button.textContent = db.dataset.labelRunning;
+			status.textContent = '';
+			step();
+		});
 	}
 
 	// Fila da otimização em massa: um lote curto por requisição até não restar nada pendente.
