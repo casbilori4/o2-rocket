@@ -106,7 +106,8 @@ function render_requirements_notice() {
 	}
 }
 
-// O2Rocket\Admin\ => admin/, O2Rocket\Frontend\ => public/ ("Public" é reservado no PHP 7.4), O2Rocket\ => includes/.
+// O2Rocket\Admin\ => admin/, O2Rocket\Frontend\ => public/ ("Public" é reservado no PHP 7.4),
+// O2Rocket\Vendor\* => vendor/ (bibliotecas de terceiros com namespace trocado), O2Rocket\ => includes/.
 function autoloader() {
 	static $autoloader = null;
 
@@ -117,6 +118,8 @@ function autoloader() {
 		$autoloader
 			->add_namespace( __NAMESPACE__ . '\\Admin', O2_ROCKET_ADMIN_PATH )
 			->add_namespace( __NAMESPACE__ . '\\Frontend', O2_ROCKET_PUBLIC_PATH )
+			->add_namespace( __NAMESPACE__ . '\\Vendor\\Minify', O2_ROCKET_PATH . 'vendor/matthiasmullie/minify/src/' )
+			->add_namespace( __NAMESPACE__ . '\\Vendor\\PathConverter', O2_ROCKET_PATH . 'vendor/matthiasmullie/path-converter/src/' )
 			->add_namespace( __NAMESPACE__, O2_ROCKET_INC_PATH );
 		$autoloader->register();
 	}
@@ -192,6 +195,55 @@ function atomic_write( $file, $contents, $mode = false ) {
 	}
 
 	return $written;
+}
+
+// Caminho relativo do JS a usar: o .min.js, exceto com SCRIPT_DEBUG ou se ele não corresponder ao .js atual
+// (a primeira linha do .min.js guarda o md5 do .js de origem: "/*o2r:md5*/").
+function script_path( $path ) {
+	static $resolved = array();
+
+	if ( isset( $resolved[ $path ] ) ) {
+		return $resolved[ $path ];
+	}
+
+	$min    = (string) preg_replace( '/\.js$/', '.min.js', $path );
+	$source = O2_ROCKET_PATH . $path;
+	$target = O2_ROCKET_PATH . $min;
+
+	$resolved[ $path ] = $path;
+
+	if ( ( defined( 'SCRIPT_DEBUG' ) && SCRIPT_DEBUG ) || ! is_readable( $target ) ) {
+		return $path;
+	}
+
+	if ( ! is_readable( $source ) ) {
+		$resolved[ $path ] = $min;
+
+		return $min;
+	}
+
+	$head = (string) file_get_contents( $target, false, null, 0, 48 ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+
+	if ( preg_match( '#^/\*o2r:([0-9a-f]{32})\*/#', $head, $match ) && md5_file( $source ) === $match[1] ) {
+		$resolved[ $path ] = $min;
+	}
+
+	return $resolved[ $path ];
+}
+
+function script_url( $path ) {
+	return plugins_url( script_path( $path ), O2_ROCKET_FILE );
+}
+
+// Conteúdo de um JS do plugin para ir em linha na página ("</script" escapado).
+function inline_script( $base ) {
+	$file = O2_ROCKET_PATH . script_path( $base . '.js' );
+
+	if ( ! is_readable( $file ) ) {
+		return '';
+	}
+
+	return str_replace( '</script', '<\/script', trim( (string) file_get_contents( $file ) ) ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
 }
 
 // Sem "Deny from all": o servidor web servirá o HTML em cache direto desta pasta.
@@ -313,22 +365,60 @@ function load_textdomain() {
 add_action( 'init', __NAMESPACE__ . '\\load_textdomain' );
 
 function bootstrap() {
+	// Antes do cache: a hospedagem pode desligar o cache de página do plugin e ligar o Varnish.
+	( new ThirdParty\Hosting() )->register_hooks();
+
 	$drop_in    = new Cache\Drop_In_Manager();
 	$page_cache = new Cache\Page_Cache( $drop_in );
+	$preloader  = new Preload\Preloader( $page_cache, new Preload\Preload_Queue() );
+	$htaccess   = new Server\Htaccess();
 
+	// Ordem importa nos hooks de update_option: cache (10), pré-carregamento (20), .htaccess (30).
 	$page_cache->register_hooks();
+	$preloader->register_hooks();
+	$htaccess->register_hooks();
+	( new Server\Cache_Rewrite( $page_cache, $htaccess ) )->register_hooks();
 
+	( new Preload\Link_Prefetch( $page_cache ) )->register_hooks();
+	( new Cache\Cache_Controls( $page_cache, $preloader ) )->register_hooks();
+	( new Optimization\Html_Pipeline() )->register_hooks();
+	( new Optimization\Asset_Minifier() )->register_hooks();
+	( new Optimization\Delay_Js() )->register_hooks();
 	( new Optimization\File_Optimizer() )->register_hooks();
-	( new Media\Lazy_Load() )->register_hooks();
+
+	$lazy_load = new Media\Lazy_Load();
+	$lazy_load->register_hooks();
+
+	( new Media\Css_Background_Lazy( $lazy_load ) )->register_hooks();
+	( new Media\Image_Dimensions() )->register_hooks();
+
+	$lcp = new Media\Lcp_Optimizer( new Media\Lcp_Store(), $page_cache );
+	$lcp->register_hooks();
+
+	( new Media\Resource_Hints( $lcp ) )->register_hooks();
+	( new Media\Lazy_Render( $lcp ) )->register_hooks();
+	( new Optimization\Css_Delivery( $lcp ) )->register_hooks();
+	( new Optimization\Cdn() )->register_hooks();
+	( new Addon\Cloudflare() )->register_hooks();
+	( new Addon\Varnish() )->register_hooks();
+	( new Addon\Sucuri() )->register_hooks();
+	( new ThirdParty\Plugins( $page_cache ) )->register_hooks();
+	( new Optimization\Google_Fonts() )->register_hooks();
+	( new Optimization\Heartbeat() )->register_hooks();
+	( new Database\Cleaner() )->register_hooks();
 
 	$image_optimizer = new Media\Image_Optimizer();
 	$image_optimizer->register_hooks();
 
 	if ( is_admin() ) {
-		( new Admin\Admin_UI() )->register_hooks();
-		( new Admin\Settings( $drop_in ) )->register_hooks();
+		$admin_ui = new Admin\Admin_UI();
+		$admin_ui->register_hooks();
+
+		( new Admin\Tools( $admin_ui, $page_cache, $drop_in, $preloader, $htaccess ) )->register_hooks();
+		( new Admin\Settings( $drop_in, $preloader, $htaccess ) )->register_hooks();
 		( new Admin\Dashboard( $page_cache, $drop_in ) )->register_hooks();
 		( new Admin\Media_Dashboard() )->register_hooks();
+		( new Admin\Post_Options( $page_cache ) )->register_hooks();
 		( new Media\Bulk_Optimizer( $image_optimizer ) )->register_hooks();
 	}
 

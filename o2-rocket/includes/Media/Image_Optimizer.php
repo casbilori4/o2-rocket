@@ -5,14 +5,19 @@
 
 namespace O2Rocket\Media;
 
-use O2Rocket\Core\Request;
+use O2Rocket\Optimization\Html_Pipeline;
 
 defined( 'ABSPATH' ) || exit;
 
 final class Image_Optimizer {
 
-	const SETTING_AUTO  = 'media_webp_auto';
-	const SETTING_SERVE = 'media_webp_serve';
+	const SETTING_AUTO    = 'media_webp_auto';
+	const SETTING_SERVE   = 'media_webp_serve';
+	const SETTING_QUALITY = 'media_webp_quality';
+
+	// Qualidade padrão do WebP com perda para JPEG (100 = sem perda). PNG é sempre sem perda.
+	const DEFAULT_QUALITY = 82;
+	const META_QUALITY    = '_o2_rocket_webp_quality';
 
 	const META_STATUS    = '_o2_rocket_status';
 	const META_ORIGINAL  = '_o2_rocket_original_size';
@@ -28,20 +33,20 @@ final class Image_Optimizer {
 
 	private ?array $settings = null;
 
-	private string $buffer = '';
-
 	private array $webp_exists = array();
 
 	public function register_hooks(): void {
 		add_action( 'delete_attachment', array( $this, 'delete_webp_files' ) );
+		add_action( 'update_option_' . O2_ROCKET_OPTION, array( $this, 'on_settings_updated' ), 10, 2 );
+		add_action( 'admin_init', array( $this, 'maybe_migrate_quality' ) );
 
 		if ( $this->is_enabled( self::SETTING_AUTO ) ) {
 			add_filter( 'wp_generate_attachment_metadata', array( $this, 'on_generate_metadata' ), 20, 2 );
 		}
 
 		if ( ! is_admin() && $this->is_enabled( self::SETTING_SERVE ) ) {
-			// Depois do Page Cache (9999): este buffer fecha antes e o cache já recebe o HTML com .webp.
-			add_action( 'template_redirect', array( $this, 'start_buffer' ), 10000 );
+			add_filter( Html_Pipeline::FILTER, array( $this, 'filter_html' ), 60 );
+			add_filter( 'o2_rocket_minified_css', array( $this, 'filter_html' ) );
 		}
 	}
 
@@ -50,14 +55,65 @@ final class Image_Optimizer {
 		return function_exists( 'imagewebp' ) && defined( 'IMG_WEBP_LOSSLESS' );
 	}
 
+	// WebP com perda: GD (qualquer PHP com WebP) ou Imagick, pelo editor do próprio WordPress.
+	public static function server_supports_lossy(): bool {
+		return function_exists( 'wp_image_editor_supports' ) && wp_image_editor_supports( array( 'mime_type' => 'image/webp' ) );
+	}
+
+	public function get_quality(): int {
+		return max( 50, min( 100, (int) $this->get_settings()[ self::SETTING_QUALITY ] ) );
+	}
+
+	// Nova qualidade: os JPEGs processados com outra qualidade voltam para a fila da otimização em massa.
+	public function on_settings_updated( $old_value, $value ): void {
+		$old = is_array( $old_value ) && isset( $old_value[ self::SETTING_QUALITY ] ) ? (int) $old_value[ self::SETTING_QUALITY ] : self::DEFAULT_QUALITY;
+		$new = is_array( $value ) && isset( $value[ self::SETTING_QUALITY ] ) ? (int) $value[ self::SETTING_QUALITY ] : self::DEFAULT_QUALITY;
+
+		$this->settings = null;
+
+		if ( $old !== $new ) {
+			self::requeue_jpegs( $this->get_quality() );
+		}
+	}
+
+	// Versões anteriores só geravam WebP sem perda (quase sempre descartado em JPEG): esses JPEGs voltam uma vez para a fila.
+	public function maybe_migrate_quality(): void {
+		if ( get_option( 'o2_rocket_webp_quality_migrated' ) || ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		update_option( 'o2_rocket_webp_quality_migrated', 1, false );
+		self::requeue_jpegs( $this->get_quality() );
+	}
+
+	// Tira o status dos JPEGs processados com qualidade diferente (inclusive os da versão sem perda, sem meta de qualidade).
+	public static function requeue_jpegs( int $quality ): int {
+		global $wpdb;
+
+		$sql = "SELECT p.ID FROM {$wpdb->posts} p
+			INNER JOIN {$wpdb->postmeta} s ON s.post_id = p.ID AND s.meta_key = %s
+			LEFT JOIN {$wpdb->postmeta} q ON q.post_id = p.ID AND q.meta_key = %s
+			WHERE p.post_type = 'attachment' AND p.post_mime_type = 'image/jpeg' AND s.meta_value <> %s AND ( q.meta_value IS NULL OR q.meta_value <> %s )";
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared -- consulta montada só com placeholders.
+		$ids = (array) $wpdb->get_col( $wpdb->prepare( $sql, self::META_STATUS, self::META_QUALITY, self::STATUS_ERROR, (string) $quality ) );
+
+		foreach ( $ids as $id ) {
+			delete_post_meta( (int) $id, self::META_STATUS );
+		}
+
+		return count( $ids );
+	}
+
 	public function get_settings(): array {
 		if ( null === $this->settings ) {
 			$stored         = get_option( O2_ROCKET_OPTION, array() );
 			$this->settings = wp_parse_args(
 				is_array( $stored ) ? $stored : array(),
 				array(
-					self::SETTING_AUTO  => false,
-					self::SETTING_SERVE => false,
+					self::SETTING_AUTO    => false,
+					self::SETTING_SERVE   => false,
+					self::SETTING_QUALITY => self::DEFAULT_QUALITY,
 				)
 			);
 		}
@@ -171,34 +227,13 @@ final class Image_Optimizer {
 		}
 	}
 
-	public function start_buffer(): void {
-		if ( ! Request::is_public_frontend() || is_feed() || is_embed() || ! (bool) apply_filters( 'o2_rocket_webp_rewrite', true ) ) {
-			return;
+	// Etapa do pipeline de HTML (o pipeline já confere front-end público e resposta HTML).
+	public function filter_html( $html ) {
+		if ( ! is_string( $html ) || '' === $html || ! (bool) apply_filters( 'o2_rocket_webp_rewrite', true ) ) {
+			return $html;
 		}
 
-		$this->buffer = '';
-
-		ob_start( array( $this, 'process_buffer' ) );
-	}
-
-	// Acumula os blocos (caso algo chame ob_flush) e reescreve o HTML inteiro no fechamento.
-	public function process_buffer( $chunk, $phase = PHP_OUTPUT_HANDLER_FINAL ) {
-		if ( $phase & PHP_OUTPUT_HANDLER_CLEAN ) {
-			$this->buffer = '';
-
-			return '';
-		}
-
-		$this->buffer .= (string) $chunk;
-
-		if ( ! ( $phase & PHP_OUTPUT_HANDLER_FINAL ) ) {
-			return '';
-		}
-
-		$html         = $this->buffer;
-		$this->buffer = '';
-
-		return $this->is_html_response() ? $this->replace_urls( $html ) : $html;
+		return $this->replace_urls( $html );
 	}
 
 	// Troca URLs de uploads .jpg/.jpeg/.png (src, srcset, data-src, url() do CSS) pela versão .webp quando ela existe.
@@ -240,15 +275,18 @@ final class Image_Optimizer {
 	private function convert_file( string $file ) {
 		$original = (int) filesize( $file );
 		$webp     = $file . self::WEBP_SUFFIX;
-		$editor   = $this->get_editor( $file );
+		$quality  = $this->get_quality();
+		$is_jpeg  = 1 === preg_match( '#\.jpe?g$#i', $file );
 
-		if ( is_wp_error( $editor ) ) {
-			return $editor;
+		// JPEG com perda (o sem perda quase nunca fica menor que um JPEG); PNG sempre sem perda.
+		if ( $is_jpeg && $quality < 100 ) {
+			$saved = $this->save_lossy( $file, $webp, $quality );
+		} elseif ( self::server_supports_lossless() ) {
+			$saved = $this->save_lossless( $file, $webp );
+		} else {
+			// GD sem WebP sem perda (PHP < 8.1): PNG com perda em qualidade alta, melhor que nenhum WebP.
+			$saved = $this->save_lossy( $file, $webp, max( 90, $quality ) );
 		}
-
-		$editor->maybe_exif_rotate();
-
-		$saved = $editor->save_webp_lossless( $webp );
 
 		if ( is_wp_error( $saved ) ) {
 			return $saved;
@@ -275,6 +313,47 @@ final class Image_Optimizer {
 			'optimized' => $size,
 			'kept'      => true,
 		);
+	}
+
+	private function save_lossless( string $file, string $webp ) {
+		$editor = $this->get_editor( $file );
+
+		if ( is_wp_error( $editor ) ) {
+			return $editor;
+		}
+
+		$editor->maybe_exif_rotate();
+
+		return $editor->save_webp_lossless( $webp );
+	}
+
+	// Editor padrão do WordPress (GD ou Imagick) salvando em image/webp com a qualidade escolhida.
+	private function save_lossy( string $file, string $webp, int $quality ) {
+		$editor = wp_get_image_editor( $file );
+
+		if ( is_wp_error( $editor ) ) {
+			return $editor;
+		}
+
+		if ( ! $editor::supports_mime_type( 'image/webp' ) ) {
+			return new \WP_Error( 'o2r_webp_unsupported', __( 'o editor de imagens deste servidor não gera WebP', 'o2-rocket' ) );
+		}
+
+		$editor->maybe_exif_rotate();
+		$editor->set_quality( $quality );
+
+		$saved = $editor->save( $webp, 'image/webp' );
+
+		if ( is_wp_error( $saved ) ) {
+			return $saved;
+		}
+
+		// O editor pode ter acrescentado a extensão (.webp.webp): volta para o nome esperado.
+		if ( is_array( $saved ) && ! empty( $saved['path'] ) && wp_normalize_path( $saved['path'] ) !== wp_normalize_path( $webp ) && is_file( $saved['path'] ) ) {
+			rename( $saved['path'], $webp ); // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
+		}
+
+		return true;
 	}
 
 	// Usa a fábrica do WordPress (wp_get_image_editor) restrita ao editor lossless.
@@ -309,6 +388,7 @@ final class Image_Optimizer {
 		$id = (int) $result['id'];
 
 		update_post_meta( $id, self::META_STATUS, $result['status'] );
+		update_post_meta( $id, self::META_QUALITY, (string) $this->get_quality() );
 		update_post_meta( $id, self::META_ORIGINAL, (int) $result['original'] );
 		update_post_meta( $id, self::META_OPTIMIZED, (int) $result['optimized'] );
 
@@ -319,15 +399,5 @@ final class Image_Optimizer {
 		}
 
 		return $result;
-	}
-
-	private function is_html_response(): bool {
-		foreach ( headers_list() as $header ) {
-			if ( 0 === stripos( $header, 'content-type:' ) && false === stripos( $header, 'text/html' ) ) {
-				return false;
-			}
-		}
-
-		return true;
 	}
 }

@@ -11,8 +11,11 @@ defined( 'ABSPATH' ) || exit;
 
 final class File_Optimizer {
 
-	const SETTING_REMOVE_QUERY_STRINGS = 'file_remove_query_strings';
-	const SETTING_DEFER_JS             = 'file_defer_js';
+	const SETTING_REMOVE_QUERY_STRINGS  = 'file_remove_query_strings';
+	const SETTING_DEFER_JS              = 'file_defer_js';
+	const SETTING_DEFER_JS_EXCLUDED     = 'file_defer_js_excluded';
+	const SETTING_REMOVE_EMOJIS         = 'file_remove_emojis';
+	const SETTING_REMOVE_JQUERY_MIGRATE = 'file_remove_jquery_migrate';
 
 	const HOOK_PRIORITY = 999;
 
@@ -44,6 +47,14 @@ final class File_Optimizer {
 			return;
 		}
 
+		if ( $this->is_enabled( self::SETTING_REMOVE_EMOJIS ) ) {
+			add_action( 'init', array( $this, 'remove_emojis' ) );
+		}
+
+		if ( $this->is_enabled( self::SETTING_REMOVE_JQUERY_MIGRATE ) ) {
+			add_action( 'wp_default_scripts', array( $this, 'remove_jquery_migrate' ) );
+		}
+
 		if ( $this->is_enabled( self::SETTING_REMOVE_QUERY_STRINGS ) ) {
 			add_filter( 'style_loader_src', array( $this, 'filter_style_src' ), self::HOOK_PRIORITY, 2 );
 			add_filter( 'script_loader_src', array( $this, 'filter_script_src' ), self::HOOK_PRIORITY, 2 );
@@ -60,8 +71,11 @@ final class File_Optimizer {
 			$this->settings = wp_parse_args(
 				is_array( $stored ) ? $stored : array(),
 				array(
-					self::SETTING_REMOVE_QUERY_STRINGS => false,
-					self::SETTING_DEFER_JS             => false,
+					self::SETTING_REMOVE_QUERY_STRINGS  => false,
+					self::SETTING_DEFER_JS              => false,
+					self::SETTING_DEFER_JS_EXCLUDED     => array(),
+					self::SETTING_REMOVE_EMOJIS         => false,
+					self::SETTING_REMOVE_JQUERY_MIGRATE => false,
 				)
 			);
 		}
@@ -75,6 +89,42 @@ final class File_Optimizer {
 		return isset( $settings[ $setting ] ) && rest_sanitize_boolean( $settings[ $setting ] );
 	}
 
+	// Script de detecção e estilos dos emojis (os navegadores atuais já desenham emojis): no front-end, feeds e e-mails.
+	public function remove_emojis(): void {
+		remove_action( 'wp_head', 'print_emoji_detection_script', 7 );
+		remove_action( 'wp_print_styles', 'print_emoji_styles' );
+		remove_action( 'wp_enqueue_scripts', 'wp_enqueue_emoji_styles' );
+		remove_filter( 'the_content_feed', 'wp_staticize_emoji' );
+		remove_filter( 'comment_text_rss', 'wp_staticize_emoji' );
+		remove_filter( 'wp_mail', 'wp_staticize_emoji_for_email' );
+		add_filter( 'emoji_svg_url', '__return_false' );
+		add_filter( 'wp_resource_hints', array( $this, 'remove_emoji_dns_prefetch' ), 10, 2 );
+	}
+
+	public function remove_emoji_dns_prefetch( $urls, $relation ) {
+		if ( 'dns-prefetch' !== $relation || ! is_array( $urls ) ) {
+			return $urls;
+		}
+
+		return array_values(
+			array_filter(
+				$urls,
+				static function ( $url ) {
+					return ! is_string( $url ) || false === strpos( $url, 's.w.org/images/core/emoji' );
+				}
+			)
+		);
+	}
+
+	// Só no front-end: o painel e os editores continuam com o jQuery Migrate.
+	public function remove_jquery_migrate( $scripts ): void {
+		if ( ! $scripts instanceof \WP_Scripts || is_admin() || ! isset( $scripts->registered['jquery'] ) || ! (bool) apply_filters( 'o2_rocket_remove_jquery_migrate', true ) ) {
+			return;
+		}
+
+		$scripts->registered['jquery']->deps = array_values( array_diff( (array) $scripts->registered['jquery']->deps, array( 'jquery-migrate' ) ) );
+	}
+
 	public function filter_style_src( $src, $handle = '' ) {
 		return $this->remove_version( $src, (string) $handle, wp_styles() );
 	}
@@ -85,6 +135,10 @@ final class File_Optimizer {
 
 	// O $tag pode trazer scripts inline (before/after/traduções): só a tag com src recebe defer.
 	public function filter_script_tag( $tag, $handle = '' ) {
+		if ( in_array( 'defer_js', Html_Pipeline::get_post_exclusions(), true ) || in_array( 'all', Html_Pipeline::get_post_exclusions(), true ) ) {
+			return $tag;
+		}
+
 		if ( ! is_string( $tag ) || '' === $tag || ! $this->can_optimize() ) {
 			return $tag;
 		}
@@ -214,6 +268,16 @@ final class File_Optimizer {
 
 		if ( '' === $src ) {
 			return false;
+		}
+
+		$settings = $this->get_settings();
+
+		foreach ( (array) $settings[ self::SETTING_DEFER_JS_EXCLUDED ] as $part ) {
+			$part = trim( (string) $part );
+
+			if ( '' !== $part && ( false !== stripos( $src, $part ) || $part === $handle ) ) {
+				return true;
+			}
 		}
 
 		$path     = wp_parse_url( $src, PHP_URL_PATH );

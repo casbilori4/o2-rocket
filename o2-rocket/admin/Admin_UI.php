@@ -18,10 +18,10 @@ final class Admin_UI {
 	const LOGO_PATH    = 'assets/images/logo.png';
 	const FONT_PATH    = 'assets/fonts/inter-latin-wght-normal.woff2';
 
+	// Bootstrap 5.3.8 (MIT) empacotado no plugin: o painel não depende de CDN.
 	const BOOTSTRAP_HANDLE  = 'o2-rocket-bootstrap';
 	const BOOTSTRAP_VERSION = '5.3.8';
-	const BOOTSTRAP_CSS_SRI = 'sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB';
-	const BOOTSTRAP_JS_SRI  = 'sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI';
+	const BOOTSTRAP_PATH    = 'assets/vendor/bootstrap/';
 
 	private string $hook_suffix = '';
 
@@ -34,8 +34,6 @@ final class Admin_UI {
 		add_action( 'admin_init', array( $this, 'register_settings' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_assets' ) );
 
-		add_filter( 'style_loader_tag', array( $this, 'filter_style_tag' ), 10, 2 );
-		add_filter( 'script_loader_tag', array( $this, 'filter_script_tag' ), 10, 2 );
 		add_filter( 'admin_body_class', array( $this, 'filter_body_class' ) );
 		add_filter( 'plugin_action_links_' . O2_ROCKET_BASENAME, array( $this, 'filter_action_links' ) );
 		add_filter( 'option_page_capability_' . self::OPTION_GROUP, array( $this, 'get_capability' ) );
@@ -77,40 +75,13 @@ final class Admin_UI {
 			return;
 		}
 
-		$cdn_base = 'https://cdn.jsdelivr.net/npm/bootstrap@' . self::BOOTSTRAP_VERSION . '/dist/';
+		$base = plugins_url( self::BOOTSTRAP_PATH, O2_ROCKET_FILE );
 
-		wp_enqueue_style( self::BOOTSTRAP_HANDLE, $cdn_base . 'css/bootstrap.min.css', array(), self::BOOTSTRAP_VERSION );
+		wp_enqueue_style( self::BOOTSTRAP_HANDLE, $base . 'bootstrap.min.css', array(), self::BOOTSTRAP_VERSION );
 		wp_add_inline_style( self::BOOTSTRAP_HANDLE, $this->get_inline_css() );
 
-		wp_enqueue_script( self::BOOTSTRAP_HANDLE, $cdn_base . 'js/bootstrap.bundle.min.js', array(), self::BOOTSTRAP_VERSION, true );
+		wp_enqueue_script( self::BOOTSTRAP_HANDLE, $base . 'bootstrap.bundle.min.js', array(), self::BOOTSTRAP_VERSION, true );
 		wp_add_inline_script( self::BOOTSTRAP_HANDLE, $this->get_inline_js() );
-	}
-
-	public function filter_style_tag( $tag, $handle ) {
-		if ( self::BOOTSTRAP_HANDLE !== $handle || false !== strpos( (string) $tag, 'integrity=' ) ) {
-			return $tag;
-		}
-
-		return preg_replace(
-			'/<link\b/i',
-			'<link integrity="' . esc_attr( self::BOOTSTRAP_CSS_SRI ) . '" crossorigin="anonymous"',
-			(string) $tag,
-			1
-		);
-	}
-
-	// O $tag inclui os scripts inline: só a tag com src recebe o SRI.
-	public function filter_script_tag( $tag, $handle ) {
-		if ( self::BOOTSTRAP_HANDLE !== $handle || false !== strpos( (string) $tag, 'integrity=' ) ) {
-			return $tag;
-		}
-
-		return preg_replace(
-			'/<script\b(?=[^>]*\ssrc=)/i',
-			'<script integrity="' . esc_attr( self::BOOTSTRAP_JS_SRI ) . '" crossorigin="anonymous"',
-			(string) $tag,
-			1
-		);
 	}
 
 	public function filter_body_class( $classes ): string {
@@ -180,6 +151,24 @@ final class Admin_UI {
 				'title'       => __( 'Banco de Dados', 'o2-rocket' ),
 				'group'       => $group_optimization,
 				'description' => __( 'Limpeza de revisões, rascunhos, transients e otimização de tabelas.', 'o2-rocket' ),
+				'type'        => 'settings',
+			),
+			'heartbeat'         => array(
+				'title'       => __( 'Heartbeat', 'o2-rocket' ),
+				'group'       => $group_optimization,
+				'description' => __( 'Frequência das requisições automáticas da Heartbeat API no site, no painel e no editor.', 'o2-rocket' ),
+				'type'        => 'settings',
+			),
+			'cdn'               => array(
+				'title'       => __( 'CDN', 'o2-rocket' ),
+				'group'       => $group_optimization,
+				'description' => __( 'Arquivos estáticos servidos pelo endereço da sua CDN.', 'o2-rocket' ),
+				'type'        => 'settings',
+			),
+			'addons'            => array(
+				'title'       => __( 'Integrações', 'o2-rocket' ),
+				'group'       => $group_system,
+				'description' => __( 'Cloudflare, Varnish e firewall da Sucuri: o cache deles é limpo junto com o do O² Rocket.', 'o2-rocket' ),
 				'type'        => 'settings',
 			),
 			'tools'             => array(
@@ -275,6 +264,32 @@ final class Admin_UI {
 		}
 
 		return $output;
+	}
+
+	// Importação e restauração: só chaves do schema, cada uma sanitizada; o que faltar volta ao padrão.
+	public function build_settings( array $values ): array {
+		$output = $this->get_default_settings();
+
+		foreach ( $this->get_settings_schema() as $key => $field ) {
+			if ( is_array( $field ) && array_key_exists( $key, $values ) ) {
+				$output[ $key ] = $this->sanitize_value( $values[ $key ], $field );
+			}
+		}
+
+		return $output;
+	}
+
+	// Chaves marcadas como secretas no schema (tokens de API): ficam fora da exportação.
+	public function get_secret_keys(): array {
+		$keys = array();
+
+		foreach ( $this->get_settings_schema() as $key => $field ) {
+			if ( is_array( $field ) && ! empty( $field['secret'] ) ) {
+				$keys[] = (string) $key;
+			}
+		}
+
+		return $keys;
 	}
 
 	// Badge de status compartilhado pelas abas (success, warning, danger, neutral).
@@ -1776,6 +1791,56 @@ body.o2r-admin #wpbody-content > .update-nag {
 	color: var(--o2r-muted);
 	font-size: 14px;
 }
+.o2r-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 12px 16px;
+}
+.o2r-actions--spaced {
+	margin-top: 20px;
+}
+.o2r-import .form-control {
+	max-width: 420px;
+}
+.o2r-section-intro .o2r-db > * + * {
+	margin-top: 16px;
+}
+.o2r-section-intro .o2r-preload > * + * {
+	margin-top: 16px;
+}
+.o2r-preload .o2r-bulk-progress {
+	margin-top: 0;
+}
+.o2r-preload .o2r-card-foot {
+	margin-top: 0;
+	padding-top: 0;
+	border-top: 0;
+}
+.o2r-checkbox-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+	gap: 8px 24px;
+}
+.o2r-checkbox-grid .form-check-label {
+	font-size: 14px;
+}
+.o2r-inline-fields {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 12px;
+}
+.o2r-wrap .o2r-input-number {
+	width: 120px;
+}
+.o2r-wrap .o2r-input-unit {
+	width: auto;
+	min-width: 140px;
+}
+.o2r-wrap textarea[readonly] {
+	background: var(--o2r-subtle);
+}
 .o2r-media-dashboard {
 	margin-bottom: 8px;
 }
@@ -1969,6 +2034,111 @@ CSS;
 		if (benchmark.dataset.autorun === '1') {
 			run();
 		}
+	}
+
+	// Andamento do pré-carregamento: consulta a cada 5 s enquanto houver fila (a consulta também adianta a fila).
+	const preload = document.querySelector('[data-o2r-preload]');
+
+	if (preload && preload.dataset.running === '1') {
+		const fill = preload.querySelector('[data-o2r-preload-fill]');
+		const percent = preload.querySelector('[data-o2r-preload-percent]');
+		const status = preload.querySelector('[data-o2r-preload-status]');
+		const locale = document.documentElement.lang || 'pt-BR';
+
+		const render = (data) => {
+			const done = data.counts.completed + data.counts.failed;
+			const value = data.total > 0 ? Math.min(100, (done / data.total) * 100) : 100;
+			const shown = value > 0 && value < 10 ? Math.round(value * 10) / 10 : Math.round(value);
+
+			fill.style.width = value.toFixed(1) + '%';
+			fill.parentElement.setAttribute('aria-valuenow', String(Math.round(value)));
+			percent.textContent = shown.toLocaleString(locale, { maximumFractionDigits: 1 }) + '%';
+
+			Object.keys(data.counts).forEach((key) => {
+				const badge = preload.querySelector('[data-o2r-preload-count="' + key + '"] .o2r-badge');
+
+				if (badge) {
+					badge.textContent = data.counts[key].toLocaleString(locale);
+				}
+			});
+
+			status.textContent = data.running
+				? preload.dataset.labelProgress.replace('%1$s', done.toLocaleString(locale)).replace('%2$s', data.total.toLocaleString(locale))
+				: preload.dataset.labelDone;
+		};
+
+		const poll = () => {
+			if (document.hidden) {
+				window.setTimeout(poll, 5000);
+				return;
+			}
+
+			post(preload)
+				.then((data) => {
+					render(data);
+
+					if (data.running) {
+						window.setTimeout(poll, 5000);
+					}
+				})
+				.catch(() => {
+					status.textContent = preload.dataset.labelError;
+				});
+		};
+
+		window.setTimeout(poll, 1500);
+	}
+
+	// Limpeza do banco: lotes de ~15 s por requisição até o servidor responder done.
+	const db = document.querySelector('[data-o2r-db]');
+
+	if (db) {
+		const button = db.querySelector('[data-o2r-db-run]');
+		const status = db.querySelector('[data-o2r-db-status]');
+		const locale = document.documentElement.lang || 'pt-BR';
+		const idle = button.textContent;
+		let removed = 0;
+
+		const render = (counts) => {
+			Object.keys(counts).forEach((key) => {
+				const badge = db.querySelector('[data-o2r-db-count="' + key + '"] .o2r-badge');
+
+				if (badge) {
+					badge.textContent = Number(counts[key]).toLocaleString(locale);
+					badge.className = 'o2r-badge ' + (counts[key] > 0 ? 'o2r-badge--warning' : 'o2r-badge--success');
+				}
+			});
+		};
+
+		const finish = (message) => {
+			button.disabled = false;
+			button.textContent = idle;
+			status.textContent = message;
+		};
+
+		const step = () => {
+			post(db)
+				.then((data) => {
+					removed += data.deleted;
+					render(data.counts);
+
+					if (!data.done) {
+						step();
+						return;
+					}
+
+					finish(db.dataset.labelDone.replace('%s', removed.toLocaleString(locale)));
+				})
+				.catch((error) => finish(error && error.message ? error.message : db.dataset.labelError));
+		};
+
+		button.addEventListener('click', () => {
+			removed = 0;
+			button.disabled = true;
+			button.textContent = db.dataset.labelRunning;
+			status.textContent = '';
+			step();
+		});
 	}
 
 	// Fila da otimização em massa: um lote curto por requisição até não restar nada pendente.

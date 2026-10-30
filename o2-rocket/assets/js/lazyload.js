@@ -1,9 +1,13 @@
-/* O² Rocket — lazy load de imagens e iframes (IntersectionObserver, sem dependências). */
-(function () {
+/* O² Rocket — lazy load de imagens, iframes, fundos e vídeos do YouTube (IntersectionObserver, sem dependências). */
+(function (window, document) {
 	'use strict';
 
-	var CLASS_NAME = 'o2-lazyload';
-	var SELECTOR = '.' + CLASS_NAME;
+	var MEDIA_CLASS = 'o2-lazyload';
+	var BG_CLASS = 'o2-lazyload-bg';
+	var SELECTOR = '.' + MEDIA_CLASS + ',.' + BG_CLASS;
+	var cssRules = window.o2rLazyBg || [];
+	var pendingVars = typeof WeakMap === 'function' ? new WeakMap() : null;
+	var observer = null;
 
 	function swap(el, name) {
 		var value = el.getAttribute('data-' + name);
@@ -14,39 +18,142 @@
 		}
 	}
 
-	// srcset antes de src: o navegador escolhe o candidato certo sem baixar o src à toa.
-	function load(el) {
-		swap(el, 'srcset');
-		swap(el, 'src');
-		el.classList.remove(CLASS_NAME);
-	}
-
-	if (!('IntersectionObserver' in window)) {
-		Array.prototype.forEach.call(document.querySelectorAll(SELECTOR), load);
-		return;
-	}
-
-	var observer = new IntersectionObserver(function (entries) {
-		for (var i = 0; i < entries.length; i++) {
-			if (entries[i].isIntersecting) {
-				observer.unobserve(entries[i].target);
-				load(entries[i].target);
+	function setVars(el, vars) {
+		for (var name in vars) {
+			if (Object.prototype.hasOwnProperty.call(vars, name)) {
+				el.style.setProperty(name, 'url("' + String(vars[name]).replace(/"/g, '%22') + '")');
 			}
 		}
-	}, { rootMargin: '200px 0px' });
+	}
+
+	// srcset antes de src: o navegador escolhe o candidato certo sem baixar o src à toa.
+	function load(el) {
+		if (el.classList.contains(MEDIA_CLASS)) {
+			var parent = el.parentNode;
+
+			if (parent && parent.nodeName === 'PICTURE') {
+				Array.prototype.forEach.call(parent.querySelectorAll('source'), function (source) {
+					swap(source, 'srcset');
+				});
+			}
+
+			swap(el, 'srcset');
+			swap(el, 'src');
+			el.classList.remove(MEDIA_CLASS);
+		}
+
+		if (el.classList.contains(BG_CLASS)) {
+			try {
+				setVars(el, JSON.parse(el.getAttribute('data-o2r-bg') || '{}'));
+			} catch (error) {
+				// JSON inválido: deixa o elemento sem fundo, como estava.
+			}
+
+			el.removeAttribute('data-o2r-bg');
+			el.classList.remove(BG_CLASS);
+		}
+
+		if (pendingVars && pendingVars.has(el)) {
+			setVars(el, pendingVars.get(el));
+			pendingVars.delete(el);
+		}
+	}
+
+	function watch(el) {
+		if (observer) {
+			observer.observe(el);
+		} else {
+			load(el);
+		}
+	}
+
+	// Elementos que usam fundos de CSS (folhas de estilo reescritas): cada seletor recebe as variáveis quando aparece.
+	function watchCss(root) {
+		if (!pendingVars || !cssRules.length) {
+			return;
+		}
+
+		cssRules.forEach(function (rule) {
+			var elements = [];
+
+			try {
+				if (root.matches && root.matches(rule.s)) {
+					elements.push(root);
+				}
+
+				if (root.querySelectorAll) {
+					elements = elements.concat(Array.prototype.slice.call(root.querySelectorAll(rule.s)));
+				}
+			} catch (error) {
+				return;
+			}
+
+			elements.forEach(function (el) {
+				var vars = pendingVars.get(el) || {};
+
+				for (var name in rule.v) {
+					if (Object.prototype.hasOwnProperty.call(rule.v, name)) {
+						vars[name] = rule.v[name];
+					}
+				}
+
+				pendingVars.set(el, vars);
+				watch(el);
+			});
+		});
+	}
 
 	function observe(root) {
-		if (root.classList && root.classList.contains(CLASS_NAME)) {
-			observer.observe(root);
+		if (root.classList && (root.classList.contains(MEDIA_CLASS) || root.classList.contains(BG_CLASS))) {
+			watch(root);
 		}
 
 		if (root.querySelectorAll) {
-			var nodes = root.querySelectorAll(SELECTOR);
-
-			for (var i = 0; i < nodes.length; i++) {
-				observer.observe(nodes[i]);
-			}
+			Array.prototype.forEach.call(root.querySelectorAll(SELECTOR), watch);
 		}
+
+		watchCss(root);
+	}
+
+	// Miniatura do YouTube: o clique (ou Enter no botão) troca pela iframe com autoplay.
+	function playYoutube(event) {
+		var facade = event.target && event.target.closest ? event.target.closest('.o2r-youtube') : null;
+
+		if (!facade || !facade.getAttribute('data-o2r-iframe')) {
+			return;
+		}
+
+		event.preventDefault();
+
+		var holder = document.createElement('div');
+		holder.innerHTML = facade.getAttribute('data-o2r-iframe');
+
+		var iframe = holder.querySelector('iframe');
+
+		if (!iframe) {
+			return;
+		}
+
+		if (!iframe.getAttribute('width') && !iframe.style.width) {
+			iframe.style.width = '100%';
+			iframe.style.height = '100%';
+			iframe.style.aspectRatio = facade.style.aspectRatio || '16/9';
+		}
+
+		facade.parentNode.replaceChild(iframe, facade);
+	}
+
+	document.addEventListener('click', playYoutube);
+
+	if ('IntersectionObserver' in window) {
+		observer = new IntersectionObserver(function (entries) {
+			for (var i = 0; i < entries.length; i++) {
+				if (entries[i].isIntersecting) {
+					observer.unobserve(entries[i].target);
+					load(entries[i].target);
+				}
+			}
+		}, { rootMargin: (window.o2rLazyMargin || 300) + 'px 0px' });
 	}
 
 	observe(document);
@@ -63,4 +170,4 @@
 			}
 		}).observe(document.documentElement, { childList: true, subtree: true });
 	}
-})();
+})(window, document);

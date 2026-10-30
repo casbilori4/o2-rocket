@@ -24,6 +24,8 @@ final class Drop_In_Manager {
 	const STATE_OUTDATED = 'outdated';
 	const STATE_CONFLICT = 'conflict';
 
+	private ?bool $wp_cache_written = null;
+
 	public function get_dropin_path(): string {
 		return wp_normalize_path( WP_CONTENT_DIR . '/advanced-cache.php' );
 	}
@@ -35,7 +37,23 @@ final class Drop_In_Manager {
 	public function get_config_file(): string {
 		$host = Page_Cache::get_site_host();
 
-		return '' === $host ? '' : O2_ROCKET_CONFIG_PATH . $host . '.php';
+		return '' === $host ? '' : O2_ROCKET_CONFIG_PATH . Cache_Engine::config_basename( $host, Page_Cache::get_site_home_path() );
+	}
+
+	// O motor de cache fica no plugin; o drop-in só guarda o caminho dele.
+	public function get_engine_path(): string {
+		return wp_normalize_path( O2_ROCKET_INC_PATH . 'Cache/Cache_Engine.php' );
+	}
+
+	public function get_dropin_contents(): string {
+		$template = direct_filesystem()->get_contents( $this->get_template_path() );
+
+		if ( ! is_string( $template ) || false === strpos( $template, self::MARKER ) ) {
+			return '';
+		}
+
+		// var_export gera uma string PHP literal: caminhos com aspas ou barras invertidas não quebram o arquivo.
+		return str_replace( "'{{O2_ROCKET_ENGINE}}'", var_export( $this->get_engine_path(), true ), $template ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_var_export
 	}
 
 	public function get_dropin_state(): string {
@@ -51,13 +69,14 @@ final class Drop_In_Manager {
 			return self::STATE_CONFLICT;
 		}
 
-		$template = $this->get_template_path();
+		$expected = $this->get_dropin_contents();
 
-		return is_readable( $template ) && md5_file( $template ) === md5( $contents ) ? self::STATE_OK : self::STATE_OUTDATED;
+		return '' !== $expected && md5( $expected ) === md5( $contents ) ? self::STATE_OK : self::STATE_OUTDATED;
 	}
 
+	// A constante reflete o wp-config do início da requisição; depois de gravarmos nele, vale o que foi gravado.
 	public function is_wp_cache_enabled(): bool {
-		return defined( 'WP_CACHE' ) && WP_CACHE;
+		return null !== $this->wp_cache_written ? $this->wp_cache_written : defined( 'WP_CACHE' ) && WP_CACHE;
 	}
 
 	public function read_config(): ?array {
@@ -77,7 +96,7 @@ final class Drop_In_Manager {
 		$state = $this->get_dropin_state();
 
 		if ( ! $enabled ) {
-			return self::STATE_OK === $state || self::STATE_OUTDATED === $state;
+			return null !== $this->read_config() || ( ( self::STATE_OK === $state || self::STATE_OUTDATED === $state ) && ! $this->has_other_configs() );
 		}
 
 		if ( self::STATE_CONFLICT === $state ) {
@@ -120,9 +139,22 @@ final class Drop_In_Manager {
 		return $this->finish( $errors );
 	}
 
-	public function disable(): bool {
+	// Remove a configuração deste site; drop-in e WP_CACHE só saem quando nenhum outro site (multisite) usa o cache.
+	public function disable( bool $everywhere = false ): bool {
 		$errors = array();
-		$state  = $this->get_dropin_state();
+
+		// Site único: qualquer configuração na pasta é dele (inclusive de um domínio antigo).
+		if ( $everywhere || ! is_multisite() ) {
+			$this->delete_all_configs();
+		} else {
+			$this->delete_config();
+		}
+
+		if ( $this->has_other_configs() ) {
+			return $this->finish( $errors );
+		}
+
+		$state = $this->get_dropin_state();
 
 		if ( ( self::STATE_OK === $state || self::STATE_OUTDATED === $state ) && ! $this->remove_dropin() ) {
 			$errors[] = __( 'não foi possível remover o wp-content/advanced-cache.php', 'o2-rocket' );
@@ -132,9 +164,37 @@ final class Drop_In_Manager {
 			$errors[] = __( 'não foi possível remover WP_CACHE do wp-config.php', 'o2-rocket' );
 		}
 
-		$this->delete_config();
-
 		return $this->finish( $errors );
+	}
+
+	// Configurações de outros sites (multisite) ou de outros endereços ainda ativas.
+	public function has_other_configs(): bool {
+		return ! empty( $this->get_config_files( $this->get_config_file() ) );
+	}
+
+	private function get_config_files( string $except = '' ): array {
+		if ( ! is_dir( O2_ROCKET_CONFIG_PATH ) ) {
+			return array();
+		}
+
+		$files = array();
+
+		foreach ( (array) scandir( O2_ROCKET_CONFIG_PATH ) as $name ) {
+			$file = O2_ROCKET_CONFIG_PATH . $name;
+
+			if ( 'index.php' !== $name && '.php' === substr( (string) $name, -4 ) && $file !== $except && is_file( $file ) ) {
+				$files[] = $file;
+			}
+		}
+
+		return $files;
+	}
+
+	private function delete_all_configs(): void {
+		foreach ( $this->get_config_files() as $file ) {
+			direct_filesystem()->delete( $file );
+			invalidate_opcache( $file );
+		}
 	}
 
 	public function get_status(): array {
@@ -152,9 +212,9 @@ final class Drop_In_Manager {
 	}
 
 	private function install_dropin(): bool {
-		$contents = direct_filesystem()->get_contents( $this->get_template_path() );
+		$contents = $this->get_dropin_contents();
 
-		if ( ! is_string( $contents ) || false === strpos( $contents, self::MARKER ) ) {
+		if ( '' === $contents ) {
 			return false;
 		}
 
@@ -190,7 +250,30 @@ final class Drop_In_Manager {
 		// var_export gera um array PHP literal: sem risco de injeção a partir das configurações.
 		$contents = "<?php\ndefined( 'ABSPATH' ) || exit;\n\nreturn " . var_export( $config, true ) . ";\n"; // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_var_export
 
-		return atomic_write( $file, $contents );
+		if ( ! atomic_write( $file, $contents ) ) {
+			return false;
+		}
+
+		$this->delete_legacy_config( $file );
+
+		return true;
+	}
+
+	// Versões antigas gravavam "{host}.php" também para sites em subpasta.
+	private function delete_legacy_config( string $current ): void {
+		$host   = Page_Cache::get_site_host();
+		$legacy = O2_ROCKET_CONFIG_PATH . $host . '.php';
+
+		if ( '' === $host || $legacy === $current || ! is_readable( $legacy ) ) {
+			return;
+		}
+
+		$config = include $legacy;
+
+		if ( is_array( $config ) && isset( $config['home_path'] ) && Cache_Engine::normalize_home_path( (string) $config['home_path'] ) === Cache_Engine::normalize_home_path( Page_Cache::get_site_home_path() ) ) {
+			direct_filesystem()->delete( $legacy );
+			invalidate_opcache( $legacy );
+		}
 	}
 
 	private function delete_config(): void {
@@ -226,11 +309,13 @@ final class Drop_In_Manager {
 			return true;
 		}
 
-		if ( '' === $contents || ! $this->is_valid_wp_config( $contents ) ) {
+		if ( '' === $contents || ! $this->is_valid_wp_config( $contents ) || ! atomic_write( $file, $contents ) ) {
 			return false;
 		}
 
-		return atomic_write( $file, $contents );
+		$this->wp_cache_written = $enable;
+
+		return true;
 	}
 
 	private function add_wp_cache_define( string $contents ): string {
