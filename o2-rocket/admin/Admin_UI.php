@@ -379,7 +379,11 @@ final class Admin_UI {
 					<div class="o2r-content">
 						<hr class="wp-header-end">
 
-						<?php $this->render_notices(); ?>
+						<?php
+						// Alertas que valem para todas as abas (ex.: cache de página parado).
+						do_action( 'o2_rocket_admin_alerts', $this );
+						$this->render_notices();
+						?>
 
 						<div class="tab-content" id="o2r-tab-content">
 							<?php
@@ -1182,6 +1186,20 @@ body.o2r-admin #wpbody-content > .update-nag {
 .o2r-wrap .o2r-button:disabled {
 	cursor: progress;
 	opacity: .6;
+}
+.o2r-wrap .o2r-button--danger {
+	background: #B91C1C;
+	border-color: #B91C1C;
+	color: #FFFFFF;
+}
+.o2r-wrap .o2r-button--danger:hover {
+	background: #991B1B;
+	border-color: #991B1B;
+	color: #FFFFFF;
+}
+.o2r-wrap .o2r-health-alert {
+	align-items: center;
+	border-width: 2px;
 }
 .o2r-wrap .o2r-button--primary {
 	background: var(--o2r-brand);

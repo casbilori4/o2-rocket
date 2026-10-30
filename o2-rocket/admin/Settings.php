@@ -1863,7 +1863,11 @@ final class Settings {
 			<?php endforeach; ?>
 		</div>
 
-		<?php if ( '' !== $status['error'] ) : ?>
+		<?php
+		// O erro guardado só vale enquanto o problema existir de fato.
+		$broken = Drop_In_Manager::STATE_OK !== $status['dropin'] || ! $status['wp_cache'] || ! $status['config'];
+		?>
+		<?php if ( '' !== $status['error'] && $broken ) : ?>
 			<div class="o2r-notice o2r-notice--warning" role="alert">
 				<div class="o2r-notice-message">
 					<p>

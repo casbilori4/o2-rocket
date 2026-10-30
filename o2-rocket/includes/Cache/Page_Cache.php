@@ -103,6 +103,7 @@ final class Page_Cache {
 		add_action( 'update_option_' . O2_ROCKET_OPTION, array( $this, 'on_settings_updated' ), 10, 2 );
 		add_action( 'admin_init', array( $this, 'maybe_handle_domain_change' ), 5 );
 		add_action( 'admin_init', array( $this, 'maybe_repair_dropin' ) );
+		add_filter( 'pre_update_option_' . O2_ROCKET_OPTION, array( $this, 'maybe_repair_on_save' ), 10, 2 );
 		add_action( 'o2_rocket_deactivate', array( $this, 'on_deactivate' ) );
 		add_action( 'o2_rocket_purge_cache', array( $this, 'purge_all' ) );
 		add_filter( 'cron_schedules', array( $this, 'add_cron_schedule' ) );
@@ -612,9 +613,79 @@ final class Page_Cache {
 		Cache_Controls::add_notice( sprintf( __( 'O endereço do site mudou de %1$s para %2$s: o cache antigo foi apagado.', 'o2-rocket' ), $last, $current ) );
 	}
 
-	// Autocorreção: ativação, atualização do plugin ou drop-in removido manualmente.
+	// Estado do cache de página conferido no disco a cada chamada (não pelo último erro guardado):
+	// code '' = funcionando ou desligado; conflict, missing, outdated, wp_cache ou config = parado.
+	public function get_health(): array {
+		$health = array(
+			'code'    => '',
+			'message' => '',
+		);
+
+		if ( ! $this->is_enabled() ) {
+			return $health;
+		}
+
+		$state    = $this->drop_in->get_dropin_state();
+		$problems = array(
+			'conflict' => __( 'o arquivo wp-content/advanced-cache.php pertence a outro plugin de cache', 'o2-rocket' ),
+			'missing'  => __( 'o arquivo wp-content/advanced-cache.php não está instalado', 'o2-rocket' ),
+			'outdated' => __( 'o arquivo wp-content/advanced-cache.php está desatualizado', 'o2-rocket' ),
+			'wp_cache' => __( 'a constante WP_CACHE não está ligada no wp-config.php', 'o2-rocket' ),
+			'config'   => __( 'falta a configuração do cache em wp-content/o2-rocket-config/', 'o2-rocket' ),
+		);
+
+		if ( Drop_In_Manager::STATE_CONFLICT === $state ) {
+			$code = 'conflict';
+		} elseif ( Drop_In_Manager::STATE_MISSING === $state ) {
+			$code = 'missing';
+		} elseif ( Drop_In_Manager::STATE_OUTDATED === $state ) {
+			$code = 'outdated';
+		} elseif ( ! $this->drop_in->is_wp_cache_enabled() ) {
+			$code = 'wp_cache';
+		} elseif ( null === $this->drop_in->read_config() ) {
+			$code = 'config';
+		} else {
+			return $health;
+		}
+
+		$error = $this->drop_in->get_last_error();
+
+		// O último erro só acrescenta algo quando diz outra coisa (ex.: sem permissão de escrita).
+		$extra = '' !== $error && false === strpos( $error, $problems[ $code ] ) ? ' (' . $error . ')' : '';
+
+		return array(
+			'code'    => $code,
+			'message' => $problems[ $code ] . $extra,
+		);
+	}
+
+	public function get_health_problem(): string {
+		return $this->get_health()['message'];
+	}
+
+	// "Corrigir agora" e salvamento sem mudanças: tenta de novo sem esperar o intervalo entre tentativas.
+	public function repair(): bool {
+		delete_transient( Drop_In_Manager::RETRY_TRANSIENT );
+		$this->config = null;
+
+		return $this->sync_dropin( $this->is_enabled() );
+	}
+
+	// Salvar as configurações sem mudar nada não dispara o update_option: se o cache estiver parado, tenta aqui.
+	public function maybe_repair_on_save( $value, $old_value ) {
+		if ( $value === $old_value && '' !== $this->get_health_problem() ) {
+			$this->repair();
+		}
+
+		return $value;
+	}
+
+	// Autocorreção: ativação, atualização do plugin ou drop-in removido manualmente. No painel do plugin, sempre confere.
 	public function maybe_repair_dropin(): void {
-		if ( wp_doing_ajax() || ! current_user_can( 'manage_options' ) || get_transient( Drop_In_Manager::RETRY_TRANSIENT ) ) {
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- só identifica a tela.
+		$own_screen = isset( $_GET['page'] ) && 'o2-rocket' === sanitize_key( wp_unslash( $_GET['page'] ) );
+
+		if ( wp_doing_ajax() || ! current_user_can( 'manage_options' ) || ( ! $own_screen && get_transient( Drop_In_Manager::RETRY_TRANSIENT ) ) ) {
 			return;
 		}
 

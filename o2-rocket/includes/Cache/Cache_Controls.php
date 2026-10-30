@@ -31,6 +31,7 @@ final class Cache_Controls {
 		add_action( 'admin_enqueue_scripts', array( $this, 'add_admin_bar_style' ) );
 		add_action( 'admin_post_' . self::ACTION, array( $this, 'handle_action' ) );
 		add_action( 'admin_notices', array( $this, 'render_notice' ) );
+		add_action( 'o2_rocket_admin_alerts', array( $this, 'render_health_alert' ) );
 		add_filter( 'post_row_actions', array( $this, 'filter_row_actions' ), 10, 2 );
 		add_filter( 'page_row_actions', array( $this, 'filter_row_actions' ), 10, 2 );
 	}
@@ -39,7 +40,7 @@ final class Cache_Controls {
 		return (string) apply_filters( 'o2_rocket_capability', 'manage_options' );
 	}
 
-	// Escopos: all (tudo), url (uma página), post (post e relacionados), preload (pré-carregar).
+	// Escopos: all (tudo), url (uma página), post (post e relacionados), preload (pré-carregar), repair (drop-in), opcache.
 	// O OPcache é do servidor inteiro: só administradores.
 	public static function can_reset_opcache(): bool {
 		return function_exists( 'opcache_reset' ) && filter_var( ini_get( 'opcache.enable' ), FILTER_VALIDATE_BOOLEAN ) && current_user_can( 'manage_options' );
@@ -74,6 +75,37 @@ final class Cache_Controls {
 			. '@media screen and (max-width:782px){' . $item . ' .o2r-ab-icon{width:52px;height:46px;margin:0}' . $item . ' .o2r-ab-icon svg{width:26px;height:26px;margin:10px auto 0}}';
 
 		wp_add_inline_style( 'admin-bar', $css );
+	}
+
+	// Topo de todas as abas do painel: o cache ligado e parado é o pior estado possível (parece funcionar, mas não serve nada).
+	public function render_health_alert(): void {
+		$health = $this->page_cache->get_health();
+
+		if ( '' === $health['code'] ) {
+			return;
+		}
+		?>
+		<div class="o2r-notice o2r-notice--danger o2r-health-alert" role="alert">
+			<div class="o2r-notice-message">
+				<p>
+					<strong><?php esc_html_e( 'O cache de página NÃO está funcionando:', 'o2-rocket' ); ?></strong>
+					<?php echo esc_html( $health['message'] . '.' ); ?>
+				</p>
+				<p>
+					<?php
+					if ( 'wp_cache' === $health['code'] ) {
+						esc_html_e( 'Se o wp-config.php não puder ser gravado, adicione logo depois da linha <?php: define( \'WP_CACHE\', true );', 'o2-rocket' );
+					} elseif ( 'conflict' === $health['code'] ) {
+						esc_html_e( 'Desative o outro plugin de cache e clique em Corrigir agora para instalar o arquivo do O² Rocket.', 'o2-rocket' );
+					} else {
+						esc_html_e( 'O O² Rocket tenta corrigir sozinho; se continuar, confira se a pasta wp-content permite gravação.', 'o2-rocket' );
+					}
+					?>
+				</p>
+			</div>
+			<a class="o2r-button o2r-button--danger" href="<?php echo esc_url( self::get_action_url( 'repair' ) ); ?>"><?php esc_html_e( 'Corrigir agora', 'o2-rocket' ); ?></a>
+		</div>
+		<?php
 	}
 
 	public function add_admin_bar_menu( $bar ): void {
@@ -184,6 +216,13 @@ final class Cache_Controls {
 				$message = self::can_reset_opcache() && opcache_reset()
 					? __( 'OPcache limpo.', 'o2-rocket' )
 					: __( 'O OPcache não pôde ser limpo (desligado ou restrito pela configuração do PHP).', 'o2-rocket' );
+				break;
+
+			case 'repair':
+				$message = $this->page_cache->repair() && '' === $this->page_cache->get_health_problem()
+					? __( 'Cache de página corrigido: o advanced-cache.php e o WP_CACHE estão no lugar.', 'o2-rocket' )
+					/* translators: %s: motivo. */
+					: sprintf( __( 'Ainda não foi possível corrigir: %s.', 'o2-rocket' ), $this->page_cache->get_health_problem() );
 				break;
 
 			case 'preload':

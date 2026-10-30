@@ -65,6 +65,11 @@ final class Drop_In_Manager {
 
 		$contents = direct_filesystem()->get_contents( $target );
 
+		// Arquivo vazio ou só com comentários (sobra de outro plugin desativado) pode ser substituído.
+		if ( is_string( $contents ) && self::has_no_code( $contents ) ) {
+			return self::STATE_MISSING;
+		}
+
 		if ( ! is_string( $contents ) || false === strpos( $contents, self::MARKER ) ) {
 			return self::STATE_CONFLICT;
 		}
@@ -75,6 +80,37 @@ final class Drop_In_Manager {
 	}
 
 	// A constante reflete o wp-config do início da requisição; depois de gravarmos nele, vale o que foi gravado.
+	// Sem nenhuma instrução PHP: só tags de abertura/fechamento, comentários e espaços.
+	public static function has_no_code( string $contents ): bool {
+		if ( '' === trim( $contents ) ) {
+			return true;
+		}
+
+		if ( ! function_exists( 'token_get_all' ) ) {
+			$stripped = (string) preg_replace( array( '#<\?(?:php)?|\?>#i', '#/\*.*?\*/#s', '#(?://|\#)[^\r\n]*#' ), '', $contents );
+
+			return '' === trim( $stripped );
+		}
+
+		foreach ( token_get_all( $contents ) as $token ) {
+			if ( ! is_array( $token ) ) {
+				return false;
+			}
+
+			if ( in_array( $token[0], array( T_OPEN_TAG, T_CLOSE_TAG, T_COMMENT, T_DOC_COMMENT, T_WHITESPACE ), true ) ) {
+				continue;
+			}
+
+			if ( T_INLINE_HTML === $token[0] && '' === trim( $token[1] ) ) {
+				continue;
+			}
+
+			return false;
+		}
+
+		return true;
+	}
+
 	public function is_wp_cache_enabled(): bool {
 		return null !== $this->wp_cache_written ? $this->wp_cache_written : defined( 'WP_CACHE' ) && WP_CACHE;
 	}

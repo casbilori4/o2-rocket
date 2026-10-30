@@ -400,7 +400,8 @@ final class Lcp_Optimizer {
 	}
 
 	private function prioritize( string $tag ): string {
-		if ( Html_Tag::has_class( $tag, Lazy_Load::CSS_CLASS ) ) {
+		// Escondida no celular (o lazy load marcou): prioridade alta faria o celular baixar uma imagem que não mostra.
+		if ( Html_Tag::has_class( $tag, Lazy_Load::CSS_CLASS ) || Html_Tag::has_attribute( $tag, Lazy_Load::MOBILE_HIDDEN_ATTRIBUTE ) ) {
 			return $tag;
 		}
 
