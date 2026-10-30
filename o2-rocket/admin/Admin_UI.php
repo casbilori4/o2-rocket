@@ -18,10 +18,10 @@ final class Admin_UI {
 	const LOGO_PATH    = 'assets/images/logo.png';
 	const FONT_PATH    = 'assets/fonts/inter-latin-wght-normal.woff2';
 
+	// Bootstrap 5.3.8 (MIT) empacotado no plugin: o painel não depende de CDN.
 	const BOOTSTRAP_HANDLE  = 'o2-rocket-bootstrap';
 	const BOOTSTRAP_VERSION = '5.3.8';
-	const BOOTSTRAP_CSS_SRI = 'sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB';
-	const BOOTSTRAP_JS_SRI  = 'sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI';
+	const BOOTSTRAP_PATH    = 'assets/vendor/bootstrap/';
 
 	private string $hook_suffix = '';
 
@@ -34,8 +34,6 @@ final class Admin_UI {
 		add_action( 'admin_init', array( $this, 'register_settings' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_assets' ) );
 
-		add_filter( 'style_loader_tag', array( $this, 'filter_style_tag' ), 10, 2 );
-		add_filter( 'script_loader_tag', array( $this, 'filter_script_tag' ), 10, 2 );
 		add_filter( 'admin_body_class', array( $this, 'filter_body_class' ) );
 		add_filter( 'plugin_action_links_' . O2_ROCKET_BASENAME, array( $this, 'filter_action_links' ) );
 		add_filter( 'option_page_capability_' . self::OPTION_GROUP, array( $this, 'get_capability' ) );
@@ -77,40 +75,13 @@ final class Admin_UI {
 			return;
 		}
 
-		$cdn_base = 'https://cdn.jsdelivr.net/npm/bootstrap@' . self::BOOTSTRAP_VERSION . '/dist/';
+		$base = plugins_url( self::BOOTSTRAP_PATH, O2_ROCKET_FILE );
 
-		wp_enqueue_style( self::BOOTSTRAP_HANDLE, $cdn_base . 'css/bootstrap.min.css', array(), self::BOOTSTRAP_VERSION );
+		wp_enqueue_style( self::BOOTSTRAP_HANDLE, $base . 'bootstrap.min.css', array(), self::BOOTSTRAP_VERSION );
 		wp_add_inline_style( self::BOOTSTRAP_HANDLE, $this->get_inline_css() );
 
-		wp_enqueue_script( self::BOOTSTRAP_HANDLE, $cdn_base . 'js/bootstrap.bundle.min.js', array(), self::BOOTSTRAP_VERSION, true );
+		wp_enqueue_script( self::BOOTSTRAP_HANDLE, $base . 'bootstrap.bundle.min.js', array(), self::BOOTSTRAP_VERSION, true );
 		wp_add_inline_script( self::BOOTSTRAP_HANDLE, $this->get_inline_js() );
-	}
-
-	public function filter_style_tag( $tag, $handle ) {
-		if ( self::BOOTSTRAP_HANDLE !== $handle || false !== strpos( (string) $tag, 'integrity=' ) ) {
-			return $tag;
-		}
-
-		return preg_replace(
-			'/<link\b/i',
-			'<link integrity="' . esc_attr( self::BOOTSTRAP_CSS_SRI ) . '" crossorigin="anonymous"',
-			(string) $tag,
-			1
-		);
-	}
-
-	// O $tag inclui os scripts inline: só a tag com src recebe o SRI.
-	public function filter_script_tag( $tag, $handle ) {
-		if ( self::BOOTSTRAP_HANDLE !== $handle || false !== strpos( (string) $tag, 'integrity=' ) ) {
-			return $tag;
-		}
-
-		return preg_replace(
-			'/<script\b(?=[^>]*\ssrc=)/i',
-			'<script integrity="' . esc_attr( self::BOOTSTRAP_JS_SRI ) . '" crossorigin="anonymous"',
-			(string) $tag,
-			1
-		);
 	}
 
 	public function filter_body_class( $classes ): string {
