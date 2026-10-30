@@ -1259,9 +1259,39 @@ body.o2r-admin #wpbody-content > .update-nag {
 	border: 1px solid var(--o2r-border);
 	border-radius: var(--o2r-radius);
 }
-.o2r-profile.is-recommended {
+.o2r-profile-info {
+	flex: 0 0 auto;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border: 1px solid var(--o2r-border);
+	border-radius: 50%;
+	background: var(--o2r-surface);
+	color: var(--o2r-muted);
+	font: italic 600 13px/22px Georgia, serif;
+	cursor: pointer;
+}
+.o2r-profile-info:hover,
+.o2r-profile-info:focus-visible {
 	border-color: var(--o2r-brand);
-	box-shadow: inset 0 0 0 1px var(--o2r-brand);
+	color: var(--o2r-brand);
+}
+.o2r-profile-dialog {
+	width: min(480px, calc(100vw - 32px));
+	padding: 24px;
+	border: 1px solid var(--o2r-border);
+	border-radius: var(--o2r-radius);
+	color: inherit;
+}
+.o2r-profile-dialog::backdrop {
+	background: rgba(15, 23, 42, .45);
+}
+.o2r-profile-dialog .o2r-profile-features {
+	margin: 12px 0;
+}
+.o2r-profile-dialog form {
+	margin-top: 16px;
+	text-align: right;
 }
 .o2r-profile.is-active {
 	background: var(--o2r-brand-50);
@@ -1289,6 +1319,7 @@ body.o2r-admin #wpbody-content > .update-nag {
 	display: flex;
 	flex-wrap: wrap;
 	justify-content: flex-end;
+	align-items: center;
 	gap: 6px;
 }
 .o2r-profile-badge {
@@ -2289,6 +2320,19 @@ CSS;
 			run();
 		}
 	}
+
+	document.querySelectorAll('[data-o2r-dialog]').forEach((button) => {
+		const dialog = document.getElementById(button.dataset.o2rDialog);
+
+		if (dialog && typeof dialog.showModal === 'function') {
+			button.addEventListener('click', () => dialog.showModal());
+			dialog.addEventListener('click', (event) => {
+				if (event.target === dialog) {
+					dialog.close();
+				}
+			});
+		}
+	});
 
 	document.querySelectorAll('[data-o2r-requires]').forEach((field) => {
 		const control = document.getElementById(field.dataset.o2rRequires);

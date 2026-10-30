@@ -307,6 +307,7 @@ final class Profiles {
 					<?php if ( $in_use ) : ?>
 						<span class="o2r-profile-badge o2r-profile-badge--active"><?php esc_html_e( 'Em uso', 'o2-rocket' ); ?></span>
 					<?php endif; ?>
+					<button type="button" class="o2r-profile-info" data-o2r-dialog="<?php echo esc_attr( 'o2r-profile-dialog-' . $id ); ?>" aria-label="<?php /* translators: %s: nome do perfil. */ echo esc_attr( sprintf( __( 'O que o perfil %s inclui', 'o2-rocket' ), $profile['name'] ) ); ?>">i</button>
 				</div>
 			</div>
 			<h4 class="o2r-profile-name"><?php echo esc_html( $profile['name'] ); ?></h4>
@@ -317,12 +318,16 @@ final class Profiles {
 				$this->render_scale( __( 'Risco', 'o2-rocket' ), (int) $profile['risk'], (string) $profile['risk_label'], 'risk' );
 				?>
 			</div>
-			<ul class="o2r-profile-features">
-				<?php foreach ( $profile['features'] as $feature ) : ?>
-					<li><?php echo esc_html( $feature ); ?></li>
-				<?php endforeach; ?>
-			</ul>
-			<p class="o2r-profile-note"><?php echo esc_html( $profile['note'] ); ?></p>
+			<dialog class="o2r-profile-dialog" id="<?php echo esc_attr( 'o2r-profile-dialog-' . $id ); ?>" aria-labelledby="<?php echo esc_attr( 'o2r-profile-dialog-title-' . $id ); ?>">
+				<h4 class="o2r-profile-name" id="<?php echo esc_attr( 'o2r-profile-dialog-title-' . $id ); ?>"><?php echo esc_html( $profile['name'] ); ?></h4>
+				<ul class="o2r-profile-features">
+					<?php foreach ( $profile['features'] as $feature ) : ?>
+						<li><?php echo esc_html( $feature ); ?></li>
+					<?php endforeach; ?>
+				</ul>
+				<p class="o2r-profile-note"><?php echo esc_html( $profile['note'] ); ?></p>
+				<form method="dialog"><button type="submit" class="o2r-button"><?php esc_html_e( 'Fechar', 'o2-rocket' ); ?></button></form>
+			</dialog>
 			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="o2r-profile-form">
 				<input type="hidden" name="action" value="<?php echo esc_attr( self::APPLY_ACTION ); ?>">
 				<input type="hidden" name="profile" value="<?php echo esc_attr( $id ); ?>">
