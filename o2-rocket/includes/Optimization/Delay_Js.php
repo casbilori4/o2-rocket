@@ -5,6 +5,8 @@
 
 namespace O2Rocket\Optimization;
 
+use O2Rocket\Core\Url_Resolver;
+
 use function O2Rocket\inline_script;
 
 defined( 'ABSPATH' ) || exit;
@@ -64,6 +66,9 @@ final class Delay_Js {
 	private int $delayed = 0;
 
 	private bool $keep_jquery = false;
+
+	// Arquivos locais já lidos nesta requisição: caminho => usa o jQuery.
+	private array $file_uses_jquery = array();
 
 	public function register_hooks(): void {
 		if ( is_admin() || ! $this->is_enabled() ) {
@@ -169,18 +174,25 @@ final class Delay_Js {
 		return $new . $content . '</script>';
 	}
 
-	// Script que roda na hora (excluído do atraso) ou atributo onclick/onchange... que chama o jQuery: o jQuery também
-	// precisa rodar na hora, senão "jQuery is not defined" e o menu, o slider... param. Filtro o2_rocket_delay_js_keep_jquery.
+	// Script que roda na hora (excluído do atraso, módulo ES ou atributo onclick/onchange...) que chama o jQuery: o jQuery
+	// também precisa rodar na hora, senão "jQuery is not defined" e o menu, o slider... param. Arquivos locais são lidos
+	// (módulos com os imports). Filtro o2_rocket_delay_js_keep_jquery.
 	private function needs_jquery_now( string $html ): bool {
 		$needs = 1 === preg_match( '#\son[a-z]+\s*=\s*(?:"[^"]*\bjQuery\b[^"]*"|\'[^\']*\bjQuery\b[^\']*\')#i', $html );
 
 		if ( ! $needs && preg_match_all( self::SCRIPT_REGEX, $html, $scripts, PREG_SET_ORDER ) ) {
 			foreach ( $scripts as $script ) {
-				$tag  = '<script' . $script[1] . '>';
-				$type = strtolower( trim( (string) Html_Tag::get_attribute( $tag, 'type' ) ) );
-				$src  = (string) Html_Tag::get_attribute( $tag, 'src' );
+				$tag    = '<script' . $script[1] . '>';
+				$type   = strtolower( trim( (string) Html_Tag::get_attribute( $tag, 'type' ) ) );
+				$src    = trim( (string) Html_Tag::get_attribute( $tag, 'src' ) );
+				$module = 'module' === $type;
 
-				if ( ( '' === $type || in_array( $type, Html_Tag::JS_TYPES, true ) ) && 1 !== preg_match( self::JQUERY_FILE, $src ) && 1 === preg_match( self::USES_JQUERY, $script[2] ) && $this->is_excluded( $script[0] ) ) {
+				// Módulos nunca são atrasados; os demais só contam se ficarem fora do atraso.
+				if ( ( ! $module && '' !== $type && ! in_array( $type, Html_Tag::JS_TYPES, true ) ) || ( '' !== $src && 1 === preg_match( self::JQUERY_FILE, $src ) ) || ( ! $module && ! $this->is_excluded( $script[0] ) ) ) {
+					continue;
+				}
+
+				if ( 1 === preg_match( self::USES_JQUERY, $script[2] ) || ( '' !== $src && $this->local_file_uses_jquery( html_entity_decode( $src ), $module, 0 ) ) ) {
 					$needs = true;
 					break;
 				}
@@ -188,6 +200,40 @@ final class Delay_Js {
 		}
 
 		return (bool) apply_filters( 'o2_rocket_delay_js_keep_jquery', $needs, $html );
+	}
+
+	// Lê o arquivo local (até 512 KB) e, em módulos, os imports relativos (até 4 níveis).
+	private function local_file_uses_jquery( string $url, bool $module, int $depth ): bool {
+		$path = Url_Resolver::is_local( $url ) ? Url_Resolver::to_path( $url ) : '';
+
+		if ( '' === $path || ! is_file( $path ) || $depth > 4 ) {
+			return false;
+		}
+
+		if ( isset( $this->file_uses_jquery[ $path ] ) ) {
+			return $this->file_uses_jquery[ $path ];
+		}
+
+		$this->file_uses_jquery[ $path ] = false;
+
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- arquivo local do site.
+		$code = (string) file_get_contents( $path, false, null, 0, 512 * KB_IN_BYTES );
+		$uses = 1 === preg_match( self::USES_JQUERY, $code );
+
+		if ( ! $uses && $module && preg_match_all( '#\bimport\s*(?:[^"\'();]*?\bfrom\s*)?["\'](\.{1,2}/[^"\']+)["\']#', $code, $imports ) ) {
+			$base = substr( $url, 0, (int) strrpos( strtok( $url, '?#' ), '/' ) + 1 );
+
+			foreach ( array_unique( $imports[1] ) as $import ) {
+				if ( $this->local_file_uses_jquery( \WP_Http::make_absolute_url( $import, $base ), true, $depth + 1 ) ) {
+					$uses = true;
+					break;
+				}
+			}
+		}
+
+		$this->file_uses_jquery[ $path ] = $uses;
+
+		return $uses;
 	}
 
 	public function is_excluded( string $element ): bool {
