@@ -80,7 +80,7 @@ final class Lcp_Optimizer {
 		}
 
 		// Também alimenta o CSS crítico (tokens dos elementos acima da dobra).
-		return ! empty( $stored[ Resource_Hints::SETTING_FONTS_AUTO ] ) || ! empty( $stored[ Resource_Hints::SETTING_PRECONNECT_AUTO ] ) || ( isset( $stored[ Css_Delivery::SETTING_MODE ] ) && 'critical' === $stored[ Css_Delivery::SETTING_MODE ] );
+		return ! empty( $stored[ Resource_Hints::SETTING_FONTS_AUTO ] ) || ! empty( $stored[ Resource_Hints::SETTING_PRECONNECT_AUTO ] ) || ! empty( $stored[ Lazy_Render::SETTING ] ) || ( isset( $stored[ Css_Delivery::SETTING_MODE ] ) && 'critical' === $stored[ Css_Delivery::SETTING_MODE ] );
 	}
 
 	public function maybe_install(): void {
@@ -131,10 +131,9 @@ final class Lcp_Optimizer {
 		}
 
 		$measurements = $this->get_measurements();
-		$mode         = $this->get_mode();
 
 		// Sem cache separado para celular, a mesma página serve os dois: mede até ter os dois dispositivos.
-		if ( empty( $measurements ) || ( 'auto' === $mode && count( $measurements ) < 2 ) ) {
+		if ( ! $this->has_complete_measurements() ) {
 			$html = $this->maybe_add_beacon( $html );
 		}
 
@@ -183,6 +182,11 @@ final class Lcp_Optimizer {
 			'cors'    => isset( $found['cors'] ) && is_array( $found['cors'] ) ? self::sanitize_origins( $found['cors'] ) : array(),
 			'tokens'  => is_array( $data ) && isset( $data['tokens'] ) && is_array( $data['tokens'] ) ? self::sanitize_tokens( $data['tokens'] ) : array(),
 		);
+
+		// Blocos bem abaixo da dobra (renderização sob demanda): só quando o beacon mediu.
+		if ( is_array( $data ) && isset( $data['lr'] ) && is_array( $data['lr'] ) ) {
+			$extras['lr'] = Lazy_Render::sanitize( $data['lr'] );
+		}
 
 		if ( ! $this->is_plausible( $url, $device, $lcp ) ) {
 			wp_send_json_error( null, 422 );
@@ -267,6 +271,13 @@ final class Lcp_Optimizer {
 		return $this->measurements;
 	}
 
+	// Todos os dispositivos que recebem esta resposta já foram medidos.
+	public function has_complete_measurements(): bool {
+		$measurements = $this->get_measurements();
+
+		return 'auto' === $this->get_mode() ? count( $measurements ) >= 2 : ! empty( $measurements );
+	}
+
 	private function get_mode(): string {
 		if ( ! $this->page_cache->is_mobile_cache_enabled() ) {
 			return 'auto';
@@ -296,11 +307,14 @@ final class Lcp_Optimizer {
 		}
 
 		$mode   = $this->get_mode();
-		$config = array(
-			'ajax' => admin_url( 'admin-ajax.php' ),
-			'url'  => untrailingslashit( $url ),
-			'mode' => $mode,
-			'key'  => self::sign( $url, $mode ),
+		$config = (array) apply_filters(
+			'o2_rocket_beacon_config',
+			array(
+				'ajax' => admin_url( 'admin-ajax.php' ),
+				'url'  => untrailingslashit( $url ),
+				'mode' => $mode,
+				'key'  => self::sign( $url, $mode ),
+			)
 		);
 
 		$script   = '<script id="o2r-beacon" data-o2r-nodelay>window.o2rBeacon=' . wp_json_encode( $config, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG ) . ';' . inline_script( self::BEACON_FILE ) . '</script>';

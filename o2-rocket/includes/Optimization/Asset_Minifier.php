@@ -223,6 +223,11 @@ final class Asset_Minifier {
 			return '';
 		}
 
+		// Depois da comparação: WebP e CDN alongam as URLs sem que isso seja perda.
+		if ( 'css' === $type ) {
+			$minified = (string) apply_filters( 'o2_rocket_minified_css', $minified );
+		}
+
 		if ( ! wp_mkdir_p( self::get_cache_dir() ) || ! atomic_write( $target, $minified ) ) {
 			return '';
 		}
@@ -240,8 +245,7 @@ final class Asset_Minifier {
 			$minified = Css_Url_Rewriter::add_font_display( $minified );
 		}
 
-		// Outros módulos ajustam a cópia (ex.: imagens .jpg/.png trocadas pelo .webp).
-		return (string) apply_filters( 'o2_rocket_minified_css', $minified );
+		return $minified;
 	}
 
 	private function minify_js( string $source ): string {

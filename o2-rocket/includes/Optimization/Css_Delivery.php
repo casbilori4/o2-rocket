@@ -41,7 +41,7 @@ final class Css_Delivery {
 		'woocommerce-*', 'cmplz-*', '*cookie*', '*consent*',
 	);
 
-	// Blocos <style> que mudam a cada página/visita (das listas do WP Rocket): ficam como estão.
+	// Blocos <style> que mudam a cada página/visita (das listas GPL publicadas pela WP Media): ficam como estão.
 	const INLINE_EXCLUDED = array(
 		'divi-style-parent-inline-inline-css', 'gsf-custom-css', 'extra-style-inline-inline-css', 'woodmart-inline-css-inline-css',
 		'woodmart_shortcodes-custom-css', 'rs-plugin-settings-inline-css', 'divi-style-inline-inline-css', 'tcb-post-list-dynamic-style',

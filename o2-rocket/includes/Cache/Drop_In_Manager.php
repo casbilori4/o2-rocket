@@ -24,6 +24,8 @@ final class Drop_In_Manager {
 	const STATE_OUTDATED = 'outdated';
 	const STATE_CONFLICT = 'conflict';
 
+	private ?bool $wp_cache_written = null;
+
 	public function get_dropin_path(): string {
 		return wp_normalize_path( WP_CONTENT_DIR . '/advanced-cache.php' );
 	}
@@ -72,8 +74,9 @@ final class Drop_In_Manager {
 		return '' !== $expected && md5( $expected ) === md5( $contents ) ? self::STATE_OK : self::STATE_OUTDATED;
 	}
 
+	// A constante reflete o wp-config do início da requisição; depois de gravarmos nele, vale o que foi gravado.
 	public function is_wp_cache_enabled(): bool {
-		return defined( 'WP_CACHE' ) && WP_CACHE;
+		return null !== $this->wp_cache_written ? $this->wp_cache_written : defined( 'WP_CACHE' ) && WP_CACHE;
 	}
 
 	public function read_config(): ?array {
@@ -306,11 +309,13 @@ final class Drop_In_Manager {
 			return true;
 		}
 
-		if ( '' === $contents || ! $this->is_valid_wp_config( $contents ) ) {
+		if ( '' === $contents || ! $this->is_valid_wp_config( $contents ) || ! atomic_write( $file, $contents ) ) {
 			return false;
 		}
 
-		return atomic_write( $file, $contents );
+		$this->wp_cache_written = $enable;
+
+		return true;
 	}
 
 	private function add_wp_cache_define( string $contents ): string {

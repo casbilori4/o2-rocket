@@ -2,8 +2,8 @@
 /**
  * Padrões de scripts que não podem ser atrasados até a interação.
  *
- * Origem: listas dinâmicas do WP Rocket 3.20.3 (dynamic-lists.json e dynamic-lists-delayjs.json, GPL-2.0-or-later),
- * sem as entradas que só se aplicam ao próprio WP Rocket. Cada padrão é uma regex (delimitador #, sem flags)
+ * Origem: listas dinâmicas publicadas pela WP Media (dynamic-lists.json e dynamic-lists-delayjs.json, GPL-2.0-or-later),
+ * sem as entradas que só se aplicam ao plugin de origem. Cada padrão é uma regex (delimitador #, sem flags)
  * testada contra a tag <script> inteira.
  *
  * @package O2Rocket

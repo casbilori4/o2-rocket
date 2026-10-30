@@ -5,12 +5,16 @@
 
 namespace O2Rocket\Cache;
 
+use O2Rocket\Optimization\Html_Pipeline;
+
 use function O2Rocket\atomic_write;
 use function O2Rocket\direct_filesystem;
 
 defined( 'ABSPATH' ) || exit;
 
 final class Page_Cache {
+
+	const HOME_OPTION = 'o2_rocket_last_home';
 
 	const SETTING_ENABLED              = 'page_cache_enabled';
 	const SETTING_EXCLUDED_URIS        = 'page_cache_excluded_uris';
@@ -41,7 +45,7 @@ final class Page_Cache {
 	const MAX_PATTERNS    = 500;
 	const GZIP_LEVEL      = 6;
 
-	// Parâmetros de campanha/rastreamento que não mudam o conteúdo (lista do dynamic-lists.json do WP Rocket, GPL).
+	// Parâmetros de campanha/rastreamento que não mudam o conteúdo (lista dynamic-lists.json publicada pela WP Media, GPL-2.0-or-later).
 	const IGNORED_PARAMETERS = array(
 		'utm_source', 'utm_medium', 'utm_campaign', 'utm_expid', 'utm_term', 'utm_content', 'utm_id', 'utm_source_platform',
 		'utm_creative_format', 'utm_marketing_tactic', 'mtm_source', 'mtm_medium', 'mtm_campaign', 'mtm_keyword', 'mtm_cid',
@@ -97,6 +101,7 @@ final class Page_Cache {
 	public function register_hooks(): void {
 		add_action( 'add_option_' . O2_ROCKET_OPTION, array( $this, 'on_settings_added' ), 10, 2 );
 		add_action( 'update_option_' . O2_ROCKET_OPTION, array( $this, 'on_settings_updated' ), 10, 2 );
+		add_action( 'admin_init', array( $this, 'maybe_handle_domain_change' ), 5 );
 		add_action( 'admin_init', array( $this, 'maybe_repair_dropin' ) );
 		add_action( 'o2_rocket_deactivate', array( $this, 'on_deactivate' ) );
 		add_action( 'o2_rocket_purge_cache', array( $this, 'purge_all' ) );
@@ -104,12 +109,22 @@ final class Page_Cache {
 		add_action( 'init', array( $this, 'schedule_purge_expired' ) );
 		add_action( self::PURGE_EXPIRED_HOOK, array( $this, 'purge_expired' ) );
 
-		if ( ! $this->is_enabled() ) {
-			return;
+		if ( $this->is_enabled() ) {
+			add_action( 'template_redirect', array( $this, 'start_buffer' ), 9999 );
+			$this->register_purge_events();
+		} else {
+			// Sem o cache do plugin, os eventos ainda limpam caches externos (Cloudflare, Varnish, hospedagem).
+			add_action( 'init', array( $this, 'maybe_register_purge_events' ), 0 );
 		}
+	}
 
-		add_action( 'template_redirect', array( $this, 'start_buffer' ), 9999 );
+	public function maybe_register_purge_events(): void {
+		if ( has_action( 'o2_rocket_before_purge_url' ) ) {
+			$this->register_purge_events();
+		}
+	}
 
+	private function register_purge_events(): void {
 		add_action( 'pre_post_update', array( $this, 'remember_post_urls' ) );
 		add_action( 'save_post', array( $this, 'on_save_post' ), 10, 2 );
 		add_action( 'wp_trash_post', array( $this, 'on_trash_post' ) );
@@ -147,8 +162,9 @@ final class Page_Cache {
 		return $this->settings;
 	}
 
+	// Hospedagens com cache de página próprio no servidor desligam o do plugin (ThirdParty\Hosting).
 	public function is_enabled(): bool {
-		return rest_sanitize_boolean( $this->get_settings()[ self::SETTING_ENABLED ] );
+		return rest_sanitize_boolean( $this->get_settings()[ self::SETTING_ENABLED ] ) && (bool) apply_filters( 'o2_rocket_page_cache_allowed', true );
 	}
 
 	public function is_mobile_cache_enabled(): bool {
@@ -224,6 +240,11 @@ final class Page_Cache {
 		}
 
 		if ( $this->is_woocommerce_private_page() ) {
+			return false;
+		}
+
+		// "Nunca fazer cache desta página" no editor.
+		if ( in_array( 'cache', Html_Pipeline::get_post_exclusions(), true ) ) {
 			return false;
 		}
 
@@ -361,6 +382,9 @@ final class Page_Cache {
 		}
 
 		$this->purged[ $directory ] = true;
+
+		// CDN, Cloudflare, Varnish: avisados de toda URL limpa, tenha ou não cópia local.
+		do_action( 'o2_rocket_before_purge_url', $url );
 
 		if ( ! is_dir( $directory ) ) {
 			return true;
@@ -539,6 +563,55 @@ final class Page_Cache {
 		$this->purge_all();
 	}
 
+	// Endereço do site mudou (migração, search-replace no banco): o cache e a configuração do drop-in do endereço
+	// antigo saem, e o do novo começa limpo. Em site único só; no multisite cada site cuida do próprio diretório.
+	public function maybe_handle_domain_change(): void {
+		if ( wp_doing_ajax() || ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		$current = home_url( '/' );
+		$last    = get_option( self::HOME_OPTION, '' );
+
+		if ( $last === $current ) {
+			return;
+		}
+
+		update_option( self::HOME_OPTION, $current, true );
+
+		$parts = is_string( $last ) && '' !== $last ? wp_parse_url( $last ) : false;
+
+		if ( ! is_array( $parts ) || empty( $parts['host'] ) ) {
+			return;
+		}
+
+		$host     = Cache_Engine::normalize_host( $parts['host'] . ( isset( $parts['port'] ) ? ':' . $parts['port'] : '' ) );
+		$path     = isset( $parts['path'] ) ? (string) $parts['path'] : '/';
+		$segments = Cache_Engine::get_path_segments( $path );
+
+		if ( '' === $host || null === $segments ) {
+			return;
+		}
+
+		$old_dir    = self::get_cache_dir( $host, $segments );
+		$old_config = O2_ROCKET_CONFIG_PATH . Cache_Engine::config_basename( $host, $path );
+
+		if ( ! is_multisite() && $old_dir !== $this->get_site_cache_dir() && is_dir( $old_dir ) ) {
+			direct_filesystem()->delete( $old_dir, true );
+		}
+
+		if ( $old_config !== $this->drop_in->get_config_file() && is_file( $old_config ) ) {
+			direct_filesystem()->delete( $old_config );
+		}
+
+		$this->config = null;
+		$this->sync_dropin( $this->is_enabled() );
+		$this->purge_all();
+
+		/* translators: 1: endereço antigo, 2: endereço novo. */
+		Cache_Controls::add_notice( sprintf( __( 'O endereço do site mudou de %1$s para %2$s: o cache antigo foi apagado.', 'o2-rocket' ), $last, $current ) );
+	}
+
 	// Autocorreção: ativação, atualização do plugin ou drop-in removido manualmente.
 	public function maybe_repair_dropin(): void {
 		if ( wp_doing_ajax() || ! current_user_can( 'manage_options' ) || get_transient( Drop_In_Manager::RETRY_TRANSIENT ) ) {
@@ -569,7 +642,7 @@ final class Page_Cache {
 			'bypass_cookies'     => $this->get_bypass_cookies(),
 			'bypass_user_agents' => self::sanitize_user_agents( $settings[ self::SETTING_REJECTED_USER_AGENTS ] ),
 			'ignored_params'     => $this->get_ignored_parameters(),
-			'cache_query_params' => self::sanitize_query_params( $settings[ self::SETTING_QUERY_STRINGS ] ),
+			'cache_query_params' => array_values( array_unique( (array) apply_filters( 'o2_rocket_cache_query_params', self::sanitize_query_params( $settings[ self::SETTING_QUERY_STRINGS ] ) ) ) ),
 			'lifespan'           => $this->get_lifespan(),
 			'gzip'               => $this->is_gzip_enabled(),
 			'mobile'             => $this->is_mobile_cache_enabled(),

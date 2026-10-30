@@ -11,6 +11,8 @@ use O2Rocket\Cache\Page_Cache;
 use O2Rocket\Media\Lcp_Store;
 use O2Rocket\Preload\Preloader;
 use O2Rocket\Server\Htaccess;
+use O2Rocket\ThirdParty\Hosting;
+use O2Rocket\ThirdParty\Plugins;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -224,6 +226,8 @@ final class Tools {
 		$db_engine    = ( defined( 'DB_ENGINE' ) && 'sqlite' === DB_ENGINE ) ? 'SQLite' : 'MySQL/MariaDB ' . $wpdb->db_version();
 		$cron         = defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON;
 		$theme        = wp_get_theme();
+		$hosting      = new Hosting();
+		$overlapping  = ( new Plugins( $this->page_cache ) )->get_active_overlapping();
 
 		$rows = array(
 			array( 'O² Rocket', O2_ROCKET_VERSION, 'neutral', '' ),
@@ -232,6 +236,8 @@ final class Tools {
 			array( __( 'Banco de dados', 'o2-rocket' ), $db_engine, 'neutral', '' ),
 			array( __( 'Servidor web', 'o2-rocket' ), '' !== $server ? $server : __( 'não informado', 'o2-rocket' ), 'neutral', Htaccess::is_supported() ? __( 'Lê .htaccess', 'o2-rocket' ) : __( 'Não lê .htaccess', 'o2-rocket' ) ),
 			array( __( 'Tema', 'o2-rocket' ), $theme->get( 'Name' ) . ' ' . $theme->get( 'Version' ), 'neutral', '' ),
+			array( __( 'Hospedagem', 'o2-rocket' ), '' !== $hosting->get_host() ? $hosting->get_host_name() : __( 'não identificada', 'o2-rocket' ), 'neutral', $hosting->has_server_page_cache() ? __( 'Cache de página no servidor', 'o2-rocket' ) : '' ),
+			array( __( 'Plugins com a mesma função', 'o2-rocket' ), empty( $overlapping ) ? __( 'Nenhum', 'o2-rocket' ) : implode( ', ', $overlapping ), empty( $overlapping ) ? 'success' : 'warning', '' ),
 			array( __( 'Page Cache', 'o2-rocket' ), $this->page_cache->is_enabled() ? __( 'Ligado', 'o2-rocket' ) : __( 'Desligado', 'o2-rocket' ), $this->page_cache->is_enabled() ? 'success' : 'neutral', '' ),
 			array( __( 'Drop-in advanced-cache.php', 'o2-rocket' ), $this->get_dropin_label( $dropin_state ), Drop_In_Manager::STATE_OK === $dropin_state ? 'success' : ( $this->page_cache->is_enabled() ? 'danger' : 'neutral' ), $this->drop_in->get_dropin_path() ),
 			array( 'WP_CACHE', $this->drop_in->is_wp_cache_enabled() ? 'true' : 'false', $this->drop_in->is_wp_cache_enabled() ? 'success' : 'neutral', '' ),

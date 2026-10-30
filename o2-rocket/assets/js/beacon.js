@@ -200,6 +200,83 @@
 		return { fonts: fonts, origins: origins, cors: cors };
 	}
 
+	// Renderização sob demanda: contêineres longe da primeira tela, sem nada fixo/sticky dentro (content-visibility
+	// prende elementos fixos ao bloco) e sem margem negativa. Só o mais alto de cada ramo, com a altura real.
+	function lazyRender(threshold) {
+		var screen = window.innerHeight || document.documentElement.clientHeight;
+		var chosen = [];
+
+		function distance(element) {
+			return Math.max(0, element.getBoundingClientRect().top + window.pageYOffset - screen);
+		}
+
+		function negativeMargin(style) {
+			return parseFloat(style.marginTop) < 0 || parseFloat(style.marginBottom) < 0 || parseFloat(style.marginLeft) < 0 || parseFloat(style.marginRight) < 0;
+		}
+
+		function risky(element) {
+			var style = window.getComputedStyle(element);
+
+			if (style.position === 'fixed' || style.position === 'sticky' || negativeMargin(style) || (style.contentVisibility && style.contentVisibility !== 'visible') || element.querySelector('use, video[autoplay], [autofocus]')) {
+				return true;
+			}
+
+			var inner = element.getElementsByTagName('*');
+			var box = element.getBoundingClientRect();
+
+			if (inner.length > 3000) {
+				return true;
+			}
+
+			for (var i = 0; i < inner.length; i++) {
+				var position = window.getComputedStyle(inner[i]).position;
+				var rect = inner[i].getBoundingClientRect();
+
+				// Fixo/sticky preso ao bloco, ou algo desenhado fora dele (seria cortado pela contenção de pintura).
+				if (position === 'fixed' || position === 'sticky' || (rect.width > 0 && rect.height > 0 && (rect.top < box.top - 1 || rect.bottom > box.bottom + 1 || rect.left < box.left - 1 || rect.right > box.right + 1))) {
+					return true;
+				}
+			}
+
+			// A contenção de layout impede margens de atravessarem o bloco: se a altura mudar, o layout mudaria.
+			var page = document.documentElement.scrollHeight;
+			var previous = element.style.contain;
+
+			element.style.contain = 'layout paint style';
+
+			var changed = Math.abs(element.getBoundingClientRect().height - box.height) > 1 || Math.abs(document.documentElement.scrollHeight - page) > 1;
+
+			element.style.contain = previous;
+
+			return changed;
+		}
+
+		Array.prototype.forEach.call(document.querySelectorAll('[data-o2r-lr]'), function (element) {
+			if (chosen.length >= 60 || element.offsetHeight < 50 || distance(element) < threshold) {
+				return;
+			}
+
+			var parent = element.parentElement;
+
+			// O ancestral já está longe o bastante: fica com ele (ou ele foi descartado por um motivo que vale aqui também).
+			if (parent && parent !== document.body && distance(parent) >= threshold) {
+				return;
+			}
+
+			if (!risky(element)) {
+				// contain-intrinsic-size vale para a caixa de conteúdo: sem padding e borda.
+				var style = window.getComputedStyle(element);
+				var extra = ['paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth'].reduce(function (sum, name) {
+					return sum + (parseFloat(style[name]) || 0);
+				}, 0);
+
+				chosen.push([element.getAttribute('data-o2r-lr'), Math.max(1, Math.round(element.getBoundingClientRect().height - extra))]);
+			}
+		});
+
+		return chosen;
+	}
+
 	function send() {
 		// Página rolada ou em segundo plano: a medição não representa o topo da página.
 		if (window.pageYOffset > 0 || document.visibilityState === 'hidden') {
@@ -214,7 +291,13 @@
 		body.append('device', (window.innerWidth || document.documentElement.clientWidth) < 768 ? 'mobile' : 'desktop');
 		var above = aboveTheFold();
 
-		body.append('data', JSON.stringify({ lcp: describe(lcpEntry), above: above, resources: resources(), tokens: { tags: Object.keys(tokens.tags), words: Object.keys(tokens.words) } }));
+		var data = { lcp: describe(lcpEntry), above: above, resources: resources(), tokens: { tags: Object.keys(tokens.tags), words: Object.keys(tokens.words) } };
+
+		if (config.lr) {
+			data.lr = lazyRender(config.lr);
+		}
+
+		body.append('data', JSON.stringify(data));
 
 		if (!navigator.sendBeacon || !navigator.sendBeacon(config.ajax, body)) {
 			window.fetch(config.ajax, { method: 'POST', body: body, credentials: 'omit', keepalive: true }).catch(function () {});

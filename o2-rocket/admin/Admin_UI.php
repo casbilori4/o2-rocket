@@ -159,6 +159,18 @@ final class Admin_UI {
 				'description' => __( 'Frequência das requisições automáticas da Heartbeat API no site, no painel e no editor.', 'o2-rocket' ),
 				'type'        => 'settings',
 			),
+			'cdn'               => array(
+				'title'       => __( 'CDN', 'o2-rocket' ),
+				'group'       => $group_optimization,
+				'description' => __( 'Arquivos estáticos servidos pelo endereço da sua CDN.', 'o2-rocket' ),
+				'type'        => 'settings',
+			),
+			'addons'            => array(
+				'title'       => __( 'Integrações', 'o2-rocket' ),
+				'group'       => $group_system,
+				'description' => __( 'Cloudflare, Varnish e firewall da Sucuri: o cache deles é limpo junto com o do O² Rocket.', 'o2-rocket' ),
+				'type'        => 'settings',
+			),
 			'tools'             => array(
 				'title'       => __( 'Ferramentas', 'o2-rocket' ),
 				'group'       => $group_system,

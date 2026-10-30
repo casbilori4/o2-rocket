@@ -37,6 +37,11 @@ final class Cache_Controls {
 	}
 
 	// Escopos: all (tudo), url (uma página), post (post e relacionados), preload (pré-carregar).
+	// O OPcache é do servidor inteiro: só administradores.
+	public static function can_reset_opcache(): bool {
+		return function_exists( 'opcache_reset' ) && filter_var( ini_get( 'opcache.enable' ), FILTER_VALIDATE_BOOLEAN ) && current_user_can( 'manage_options' );
+	}
+
 	public static function get_action_url( string $scope, array $args = array() ): string {
 		$url = add_query_arg(
 			array_merge(
@@ -111,6 +116,17 @@ final class Cache_Controls {
 			);
 		}
 
+		if ( self::can_reset_opcache() ) {
+			$bar->add_node(
+				array(
+					'parent' => 'o2-rocket',
+					'id'     => 'o2-rocket-opcache',
+					'title'  => esc_html__( 'Limpar o OPcache', 'o2-rocket' ),
+					'href'   => self::get_action_url( 'opcache' ),
+				)
+			);
+		}
+
 		$bar->add_node(
 			array(
 				'parent' => 'o2-rocket',
@@ -142,6 +158,13 @@ final class Cache_Controls {
 			case 'post':
 				$this->page_cache->purge_post( isset( $_GET['post'] ) ? absint( $_GET['post'] ) : 0 );
 				$message = __( 'Cache do conteúdo e das páginas relacionadas limpo.', 'o2-rocket' );
+				break;
+
+			// Código PHP atualizado por FTP/deploy que o OPcache ainda não percebeu.
+			case 'opcache':
+				$message = self::can_reset_opcache() && opcache_reset()
+					? __( 'OPcache limpo.', 'o2-rocket' )
+					: __( 'O OPcache não pôde ser limpo (desligado ou restrito pela configuração do PHP).', 'o2-rocket' );
 				break;
 
 			case 'preload':

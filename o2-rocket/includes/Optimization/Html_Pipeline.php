@@ -11,11 +11,27 @@ defined( 'ABSPATH' ) || exit;
 
 // Um único buffer de saída para todas as otimizações do HTML (filtro o2_rocket_optimize_html).
 // Começa depois do buffer do Page_Cache (9999): fecha antes dele, e o cache já grava o HTML otimizado.
-// Prioridades das etapas: 10 minificação, 20 CSS, 30 fontes, 35 dimensões, 40 lazy load, 60 WebP, 70 atraso de JS, 80 dicas de recurso, 90 CDN.
+// Prioridades das etapas: 10 minificação, 20 CSS, 30 fontes, 35 dimensões, 38/40 lazy load, 60 WebP, 70 atraso de JS,
+// 80 LCP, 85 dicas de recurso, 90 CDN, 95 renderização sob demanda.
 final class Html_Pipeline {
 
 	const FILTER   = 'o2_rocket_optimize_html';
 	const PRIORITY = 10000;
+
+	// Desligáveis por página no editor (meta _o2_rocket_exclude): recurso => etapas.
+	const FEATURES = array(
+		'minify'       => array( 10 ),
+		'css_delivery' => array( 20 ),
+		'lazyload'     => array( 38, 40 ),
+		'delay_js'     => array( 70 ),
+		'lcp'          => array( 80 ),
+		'cdn'          => array( 90 ),
+		'lazy_render'  => array( 95 ),
+	);
+
+	const POST_META = '_o2_rocket_exclude';
+
+	private static ?array $exclusions = null;
 
 	// ?o2r-nooptimize mostra a página sem nenhuma otimização (diagnóstico); também pula o cache.
 	const BYPASS_PARAM = 'o2r-nooptimize';
@@ -53,7 +69,37 @@ final class Html_Pipeline {
 		return ! is_user_logged_in() || (bool) apply_filters( 'o2_rocket_optimize_for_logged_in', false );
 	}
 
+	// O que foi desligado para o post/página exibido ('cache', 'all', 'defer_js' ou chaves de FEATURES).
+	public static function get_post_exclusions(): array {
+		if ( null !== self::$exclusions ) {
+			return self::$exclusions;
+		}
+
+		if ( ! did_action( 'wp' ) ) {
+			return array();
+		}
+
+		$value            = is_singular() ? get_post_meta( (int) get_queried_object_id(), self::POST_META, true ) : array();
+		self::$exclusions = is_array( $value ) ? array_values( array_map( 'strval', $value ) ) : array();
+
+		return self::$exclusions;
+	}
+
 	public function start_buffer(): void {
+		$excluded = self::get_post_exclusions();
+
+		if ( in_array( 'all', $excluded, true ) ) {
+			return;
+		}
+
+		foreach ( self::FEATURES as $feature => $priorities ) {
+			if ( in_array( $feature, $excluded, true ) ) {
+				foreach ( $priorities as $priority ) {
+					remove_all_filters( self::FILTER, $priority );
+				}
+			}
+		}
+
 		if ( ! has_filter( self::FILTER ) || ! self::can_optimize() ) {
 			return;
 		}

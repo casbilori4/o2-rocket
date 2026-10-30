@@ -29,6 +29,10 @@ final class Uninstaller {
 		'o2_rocket_preload_db_version',
 		'o2_rocket_htaccess_status',
 		'o2_rocket_webp_quality_migrated',
+		'o2_rocket_database_last',
+		'o2_rocket_cloudflare_queue',
+		'o2_rocket_lcp_db_version',
+		'o2_rocket_last_home',
 	);
 
 	// Metadados gravados nos anexos pela otimização de imagens (os arquivos .webp ficam: outros plugins usam o mesmo nome).
@@ -38,6 +42,7 @@ final class Uninstaller {
 		'_o2_rocket_optimized_size',
 		'_o2_rocket_error',
 		'_o2_rocket_webp_quality',
+		'_o2_rocket_exclude',
 	);
 
 	public static function run(): void {
@@ -69,11 +74,13 @@ final class Uninstaller {
 			delete_post_meta_by_key( $meta_key );
 		}
 
+		$like_option    = $wpdb->esc_like( 'o2_rocket_' ) . '%';
 		$like_transient = $wpdb->esc_like( '_transient_o2_rocket_' ) . '%';
 		$like_timeout   = $wpdb->esc_like( '_transient_timeout_o2_rocket_' ) . '%';
 
+		// Inclui opções de versões futuras ou de add-ons com o mesmo prefixo.
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-		$wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s OR option_name LIKE %s", $like_transient, $like_timeout ) );
+		$wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s OR option_name LIKE %s OR option_name LIKE %s", $like_option, $like_transient, $like_timeout ) );
 
 		wp_cache_flush();
 	}

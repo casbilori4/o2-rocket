@@ -365,6 +365,9 @@ function load_textdomain() {
 add_action( 'init', __NAMESPACE__ . '\\load_textdomain' );
 
 function bootstrap() {
+	// Antes do cache: a hospedagem pode desligar o cache de página do plugin e ligar o Varnish.
+	( new ThirdParty\Hosting() )->register_hooks();
+
 	$drop_in    = new Cache\Drop_In_Manager();
 	$page_cache = new Cache\Page_Cache( $drop_in );
 	$preloader  = new Preload\Preloader( $page_cache, new Preload\Preload_Queue() );
@@ -374,6 +377,7 @@ function bootstrap() {
 	$page_cache->register_hooks();
 	$preloader->register_hooks();
 	$htaccess->register_hooks();
+	( new Server\Cache_Rewrite( $page_cache, $htaccess ) )->register_hooks();
 
 	( new Preload\Link_Prefetch( $page_cache ) )->register_hooks();
 	( new Cache\Cache_Controls( $page_cache, $preloader ) )->register_hooks();
@@ -392,7 +396,13 @@ function bootstrap() {
 	$lcp->register_hooks();
 
 	( new Media\Resource_Hints( $lcp ) )->register_hooks();
+	( new Media\Lazy_Render( $lcp ) )->register_hooks();
 	( new Optimization\Css_Delivery( $lcp ) )->register_hooks();
+	( new Optimization\Cdn() )->register_hooks();
+	( new Addon\Cloudflare() )->register_hooks();
+	( new Addon\Varnish() )->register_hooks();
+	( new Addon\Sucuri() )->register_hooks();
+	( new ThirdParty\Plugins( $page_cache ) )->register_hooks();
 	( new Optimization\Google_Fonts() )->register_hooks();
 	( new Optimization\Heartbeat() )->register_hooks();
 	( new Database\Cleaner() )->register_hooks();
@@ -408,6 +418,7 @@ function bootstrap() {
 		( new Admin\Settings( $drop_in, $preloader, $htaccess ) )->register_hooks();
 		( new Admin\Dashboard( $page_cache, $drop_in ) )->register_hooks();
 		( new Admin\Media_Dashboard() )->register_hooks();
+		( new Admin\Post_Options( $page_cache ) )->register_hooks();
 		( new Media\Bulk_Optimizer( $image_optimizer ) )->register_hooks();
 	}
 

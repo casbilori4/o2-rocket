@@ -5,6 +5,9 @@
 
 namespace O2Rocket\Admin;
 
+use O2Rocket\Addon\Cloudflare;
+use O2Rocket\Addon\Sucuri;
+use O2Rocket\Addon\Varnish;
 use O2Rocket\Cache\Cache_Controls;
 use O2Rocket\Cache\Drop_In_Manager;
 use O2Rocket\Cache\Page_Cache;
@@ -12,9 +15,11 @@ use O2Rocket\Database\Cleaner;
 use O2Rocket\Media\Image_Dimensions;
 use O2Rocket\Media\Image_Optimizer;
 use O2Rocket\Media\Lazy_Load;
+use O2Rocket\Media\Lazy_Render;
 use O2Rocket\Media\Lcp_Optimizer;
 use O2Rocket\Media\Resource_Hints;
 use O2Rocket\Optimization\Asset_Minifier;
+use O2Rocket\Optimization\Cdn;
 use O2Rocket\Optimization\Css_Delivery;
 use O2Rocket\Optimization\Delay_Js;
 use O2Rocket\Optimization\File_Optimizer;
@@ -22,7 +27,9 @@ use O2Rocket\Optimization\Google_Fonts;
 use O2Rocket\Optimization\Heartbeat;
 use O2Rocket\Preload\Link_Prefetch;
 use O2Rocket\Preload\Preloader;
+use O2Rocket\Server\Cache_Rewrite;
 use O2Rocket\Server\Htaccess;
+use O2Rocket\ThirdParty\Hosting;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -33,6 +40,8 @@ final class Settings {
 	const TAB_MEDIA             = 'media';
 	const TAB_DATABASE          = 'database';
 	const TAB_HEARTBEAT         = 'heartbeat';
+	const TAB_CDN               = 'cdn';
+	const TAB_ADDONS            = 'addons';
 
 	private Drop_In_Manager $drop_in;
 
@@ -175,6 +184,12 @@ final class Settings {
 			'tab'     => self::TAB_PAGE_CACHE,
 			'type'    => 'bool',
 			'default' => true,
+		);
+
+		$schema[ Cache_Rewrite::SETTING ] = array(
+			'tab'     => self::TAB_PAGE_CACHE,
+			'type'    => 'bool',
+			'default' => false,
 		);
 
 		$schema[ File_Optimizer::SETTING_REMOVE_QUERY_STRINGS ] = array(
@@ -352,6 +367,12 @@ final class Settings {
 			'default' => false,
 		);
 
+		$schema[ Lazy_Render::SETTING ] = array(
+			'tab'     => self::TAB_MEDIA,
+			'type'    => 'bool',
+			'default' => false,
+		);
+
 		$schema[ Image_Optimizer::SETTING_QUALITY ] = array(
 			'tab'     => self::TAB_MEDIA,
 			'type'    => 'int',
@@ -454,6 +475,73 @@ final class Settings {
 			);
 		}
 
+		$schema[ Cdn::SETTING_ENABLED ] = array(
+			'tab'     => self::TAB_CDN,
+			'type'    => 'bool',
+			'default' => false,
+		);
+
+		$schema[ Cdn::SETTING_URLS ] = array(
+			'tab'               => self::TAB_CDN,
+			'type'              => 'lines',
+			'default'           => array(),
+			'sanitize_callback' => array( Cdn::class, 'sanitize_urls' ),
+		);
+
+		$schema[ Cdn::SETTING_EXCLUDED ] = array(
+			'tab'     => self::TAB_CDN,
+			'type'    => 'lines',
+			'default' => array(),
+		);
+
+		$schema[ Cloudflare::SETTING_ENABLED ] = array(
+			'tab'     => self::TAB_ADDONS,
+			'type'    => 'bool',
+			'default' => false,
+		);
+
+		$schema[ Cloudflare::SETTING_TOKEN ] = array(
+			'tab'               => self::TAB_ADDONS,
+			'type'              => 'text',
+			'default'           => '',
+			'secret'            => true,
+			'sanitize_callback' => array( Cloudflare::class, 'sanitize_token' ),
+		);
+
+		$schema[ Cloudflare::SETTING_ZONE ] = array(
+			'tab'               => self::TAB_ADDONS,
+			'type'              => 'text',
+			'default'           => '',
+			'sanitize_callback' => array( Cloudflare::class, 'sanitize_zone' ),
+		);
+
+		$schema[ Varnish::SETTING_ENABLED ] = array(
+			'tab'     => self::TAB_ADDONS,
+			'type'    => 'bool',
+			'default' => false,
+		);
+
+		$schema[ Varnish::SETTING_HOST ] = array(
+			'tab'               => self::TAB_ADDONS,
+			'type'              => 'text',
+			'default'           => '',
+			'sanitize_callback' => array( Varnish::class, 'sanitize_host' ),
+		);
+
+		$schema[ Sucuri::SETTING_ENABLED ] = array(
+			'tab'     => self::TAB_ADDONS,
+			'type'    => 'bool',
+			'default' => false,
+		);
+
+		$schema[ Sucuri::SETTING_KEY ] = array(
+			'tab'               => self::TAB_ADDONS,
+			'type'              => 'text',
+			'default'           => '',
+			'secret'            => true,
+			'sanitize_callback' => array( Sucuri::class, 'sanitize_key_value' ),
+		);
+
 		return $schema;
 	}
 
@@ -488,6 +576,184 @@ final class Settings {
 		$this->register_font_fields( $ui );
 		$this->register_database_fields( $ui );
 		$this->register_heartbeat_fields( $ui );
+		$this->register_cdn_fields( $ui );
+		$this->register_addon_fields( $ui );
+	}
+
+	private function register_cdn_fields( Admin_UI $ui ): void {
+		$page = $ui->get_settings_page( self::TAB_CDN );
+
+		add_settings_section(
+			'o2r_cdn',
+			__( 'CDN', 'o2-rocket' ),
+			array( $this, 'render_cdn_section' ),
+			$page
+		);
+
+		add_settings_field(
+			Cdn::SETTING_ENABLED,
+			__( 'Ativar a CDN', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_cdn',
+			array(
+				'label_for'   => 'o2r-cdn-enabled',
+				'key'         => Cdn::SETTING_ENABLED,
+				'label'       => __( 'Trocar o endereço dos arquivos estáticos pelo da CDN', 'o2-rocket' ),
+				'description' => __( 'Imagens, CSS, JavaScript, fontes e vídeos de wp-content, wp-includes e uploads, em todo o HTML (src, srcset, CSS em linha, atributos data-*). O HTML continua vindo do seu servidor.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Cdn::SETTING_URLS,
+			__( 'Endereços da CDN', 'o2-rocket' ),
+			array( $this, 'render_textarea' ),
+			$page,
+			'o2r_cdn',
+			array(
+				'label_for'   => 'o2r-cdn-urls',
+				'key'         => Cdn::SETTING_URLS,
+				'rows'        => 4,
+				'placeholder' => "https://cdn.exemplo.com\nhttps://img.exemplo.com images",
+				'description' => __( 'Um por linha. Depois do endereço, opcionalmente, o tipo de arquivo que ele atende: images, css, js, fonts ou media (sem tipo = todos). Vários endereços do mesmo tipo dividem os arquivos entre si, sempre o mesmo arquivo no mesmo endereço.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Cdn::SETTING_EXCLUDED,
+			__( 'Arquivos fora da CDN', 'o2-rocket' ),
+			array( $this, 'render_textarea' ),
+			$page,
+			'o2r_cdn',
+			array(
+				'label_for'   => 'o2r-cdn-excluded',
+				'key'         => Cdn::SETTING_EXCLUDED,
+				'rows'        => 4,
+				'placeholder' => "/wp-content/plugins/meu-plugin/\n.pdf",
+				'description' => __( 'Trechos do caminho, um por linha. Qualquer arquivo cujo caminho contenha um deles continua no seu domínio.', 'o2-rocket' ),
+			)
+		);
+	}
+
+	private function register_addon_fields( Admin_UI $ui ): void {
+		$page = $ui->get_settings_page( self::TAB_ADDONS );
+
+		add_settings_section(
+			'o2r_cloudflare',
+			__( 'Cloudflare', 'o2-rocket' ),
+			array( $this, 'render_cloudflare_section' ),
+			$page
+		);
+
+		add_settings_field(
+			Cloudflare::SETTING_ENABLED,
+			__( 'Integração com a Cloudflare', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_cloudflare',
+			array(
+				'label_for'   => 'o2r-cloudflare-enabled',
+				'key'         => Cloudflare::SETTING_ENABLED,
+				'label'       => __( 'Limpar o cache da Cloudflare junto com o do O² Rocket', 'o2-rocket' ),
+				'description' => __( 'Limpeza total quando todo o cache é limpo; só as URLs alteradas quando um post, termo ou comentário muda (em lotes, alguns segundos depois).', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Cloudflare::SETTING_TOKEN,
+			__( 'Token da API', 'o2-rocket' ),
+			array( $this, 'render_text' ),
+			$page,
+			'o2r_cloudflare',
+			array(
+				'label_for'   => 'o2r-cloudflare-token',
+				'key'         => Cloudflare::SETTING_TOKEN,
+				'input_type'  => 'password',
+				'description' => __( 'Crie em Cloudflare → Meu perfil → Tokens de API, com as permissões "Zona → Limpar cache" e, para o modo de desenvolvimento, "Zona → Configurações da zona → Editar". O token não entra na exportação das configurações.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Cloudflare::SETTING_ZONE,
+			__( 'ID da zona', 'o2-rocket' ),
+			array( $this, 'render_text' ),
+			$page,
+			'o2r_cloudflare',
+			array(
+				'label_for'   => 'o2r-cloudflare-zone',
+				'key'         => Cloudflare::SETTING_ZONE,
+				'description' => __( 'Na Cloudflare, página "Visão geral" do domínio, coluna da direita (32 caracteres).', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_section(
+			'o2r_varnish',
+			__( 'Varnish', 'o2-rocket' ),
+			array( $this, 'render_varnish_section' ),
+			$page
+		);
+
+		add_settings_field(
+			Varnish::SETTING_ENABLED,
+			__( 'Limpar o Varnish', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_varnish',
+			array(
+				'label_for'   => 'o2r-varnish-enabled',
+				'key'         => Varnish::SETTING_ENABLED,
+				'label'       => __( 'Enviar PURGE ao Varnish sempre que o cache for limpo', 'o2-rocket' ),
+				'description' => __( 'Ligue só se o servidor tem Varnish (ou outro proxy que aceite PURGE) na frente do site. Hospedagens conhecidas são detectadas sozinhas.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Varnish::SETTING_HOST,
+			__( 'Endereço do Varnish', 'o2-rocket' ),
+			array( $this, 'render_text' ),
+			$page,
+			'o2r_varnish',
+			array(
+				'label_for'   => 'o2r-varnish-host',
+				'key'         => Varnish::SETTING_HOST,
+				'placeholder' => '127.0.0.1:6081',
+				'description' => __( 'Opcional. Vazio = o próprio domínio do site.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_section(
+			'o2r_sucuri',
+			__( 'Sucuri', 'o2-rocket' ),
+			null,
+			$page
+		);
+
+		add_settings_field(
+			Sucuri::SETTING_ENABLED,
+			__( 'Firewall da Sucuri', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_sucuri',
+			array(
+				'label_for' => 'o2r-sucuri-enabled',
+				'key'       => Sucuri::SETTING_ENABLED,
+				'label'     => __( 'Limpar o cache do firewall da Sucuri junto com o do O² Rocket', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Sucuri::SETTING_KEY,
+			__( 'Chave da API do firewall', 'o2-rocket' ),
+			array( $this, 'render_text' ),
+			$page,
+			'o2r_sucuri',
+			array(
+				'label_for'   => 'o2r-sucuri-key',
+				'key'         => Sucuri::SETTING_KEY,
+				'input_type'  => 'password',
+				'description' => __( 'No painel da Sucuri: Firewall → Settings → API. Formato: chave/segredo. Não entra na exportação das configurações.', 'o2-rocket' ),
+			)
+		);
 	}
 
 	private function register_media_fields( Admin_UI $ui ): void {
@@ -589,6 +855,20 @@ final class Settings {
 				'key'         => Lcp_Optimizer::SETTING_ENABLED,
 				'label'       => __( 'Medir a imagem principal de cada página e carregá-la primeiro', 'o2-rocket' ),
 				'description' => __( 'Um script de 2 KB no navegador do primeiro visitante descobre a imagem LCP e as imagens acima da dobra (no celular e no computador). A partir daí a página sai com preload e fetchpriority="high" nessa imagem e sem lazy load acima da dobra. Tudo no seu servidor, sem serviço externo.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Lazy_Render::SETTING,
+			__( 'Renderização sob demanda', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_lcp',
+			array(
+				'label_for'   => 'o2r-lazy-render',
+				'key'         => Lazy_Render::SETTING,
+				'label'       => __( 'Só montar o layout dos blocos bem abaixo da dobra quando o visitante rolar até eles', 'o2-rocket' ),
+				'description' => __( 'O mesmo script mede a posição das seções, rodapés e blocos da página no celular e no computador; os que ficam a mais de 1800 px da primeira tela nos dois ganham content-visibility:auto com a altura medida (a barra de rolagem não pula). Blocos com elementos fixos ou sticky, popups, avisos de cookies e margens negativas ficam de fora. Para excluir um bloco, adicione o atributo data-o2r-no-lazy-render.', 'o2-rocket' ),
 			)
 		);
 
@@ -1499,6 +1779,20 @@ final class Settings {
 				'description' => __( 'CSS, JS e fontes por 1 ano; imagens e vídeos por 4 meses; HTML sempre revalidado. Regras de mod_expires no .htaccess.', 'o2-rocket' ),
 			)
 		);
+
+		add_settings_field(
+			Cache_Rewrite::SETTING,
+			__( 'Entregar o cache pelo servidor', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_server',
+			array(
+				'label_for'   => 'o2r-server-serve-cache',
+				'key'         => Cache_Rewrite::SETTING,
+				'label'       => __( 'Servir as páginas em cache direto pelo Apache/LiteSpeed, sem carregar o PHP', 'o2-rocket' ),
+				'description' => __( 'Regras de mod_rewrite no .htaccess com as mesmas exclusões do cache (cookies, User-Agents, query strings). Ainda mais rápido que o drop-in, mas uma página vencida continua sendo entregue até a limpeza automática de páginas expiradas passar (de hora em hora, ou no intervalo do tempo de vida, se for menor). Só em site único; no multisite e no Nginx o drop-in continua entregando o cache.', 'o2-rocket' ),
+			)
+		);
 	}
 
 	public function render_page_cache_section(): void {
@@ -1507,6 +1801,24 @@ final class Settings {
 			<?php esc_html_e( 'Gera uma cópia em HTML de cada página visitada e a entrega antes de o WordPress carregar, sem PHP nem banco de dados.', 'o2-rocket' ); ?>
 		</p>
 		<?php
+		$hosting = new Hosting();
+
+		if ( $hosting->has_server_page_cache() && ! (bool) apply_filters( 'o2_rocket_page_cache_allowed', true ) ) {
+			?>
+			<div class="o2r-notice o2r-notice--warning" role="status">
+				<div class="o2r-notice-message">
+					<p>
+						<?php
+						/* translators: %s: nome da hospedagem. */
+						echo esc_html( sprintf( __( 'A hospedagem %s já faz cache de página no servidor: o do O² Rocket fica desligado para não duplicar o trabalho, e cada limpeza é repassada para o cache da hospedagem. As demais otimizações continuam valendo.', 'o2-rocket' ), $hosting->get_host_name() ) );
+						?>
+					</p>
+				</div>
+			</div>
+			<?php
+			return;
+		}
+
 		if ( ! rest_sanitize_boolean( $this->get_value( Page_Cache::SETTING_ENABLED, false ) ) ) {
 			return;
 		}
@@ -1888,6 +2200,50 @@ final class Settings {
 		<?php
 	}
 
+	public function render_cdn_section(): void {
+		?>
+		<p class="o2r-muted">
+			<?php esc_html_e( 'Use o endereço que a sua CDN (Bunny, KeyCDN, CloudFront, StackPath etc.) criou apontando para este site. Com a Cloudflare na frente do domínio inteiro não é preciso: use a aba Integrações.', 'o2-rocket' ); ?>
+		</p>
+		<?php
+	}
+
+	public function render_cloudflare_section(): void {
+		?>
+		<p class="o2r-muted">
+			<?php esc_html_e( 'Pela API oficial da Cloudflare, com um token só deste site (sem e-mail nem chave global).', 'o2-rocket' ); ?>
+		</p>
+		<?php
+		$cloudflare = new Cloudflare();
+
+		if ( ! $cloudflare->is_enabled() ) {
+			return;
+		}
+		?>
+		<div class="o2r-actions">
+			<a class="o2r-button" href="<?php echo esc_url( Cloudflare::get_action_url( 'test' ) ); ?>"><?php esc_html_e( 'Testar a conexão', 'o2-rocket' ); ?></a>
+			<a class="o2r-button" href="<?php echo esc_url( Cloudflare::get_action_url( 'purge' ) ); ?>"><?php esc_html_e( 'Limpar o cache da Cloudflare', 'o2-rocket' ); ?></a>
+			<a class="o2r-button" href="<?php echo esc_url( Cloudflare::get_action_url( 'devmode_on' ) ); ?>"><?php esc_html_e( 'Ligar o modo de desenvolvimento', 'o2-rocket' ); ?></a>
+			<a class="o2r-button" href="<?php echo esc_url( Cloudflare::get_action_url( 'devmode_off' ) ); ?>"><?php esc_html_e( 'Desligar o modo de desenvolvimento', 'o2-rocket' ); ?></a>
+		</div>
+		<?php
+	}
+
+	public function render_varnish_section(): void {
+		$hosting = new Hosting();
+
+		if ( (bool) apply_filters( 'o2_rocket_varnish_enabled', false ) ) {
+			?>
+			<p class="o2r-muted">
+				<?php
+				/* translators: %s: nome da hospedagem. */
+				echo esc_html( sprintf( __( 'Varnish da hospedagem %s detectado: a limpeza já é automática.', 'o2-rocket' ), $hosting->get_host_name() ) );
+				?>
+			</p>
+			<?php
+		}
+	}
+
 	public function render_heartbeat_section(): void {
 		?>
 		<p class="o2r-muted">
@@ -2011,6 +2367,25 @@ final class Settings {
 			spellcheck="false"
 			autocomplete="off"
 		><?php echo esc_textarea( $text ); ?></textarea>
+		<?php
+		$this->render_description( $args );
+	}
+
+	public function render_text( array $args ): void {
+		$key   = isset( $args['key'] ) ? (string) $args['key'] : '';
+		$id    = isset( $args['label_for'] ) ? (string) $args['label_for'] : 'o2r-' . $key;
+		$value = $this->get_value( $key, '' );
+		?>
+		<input
+			class="form-control font-monospace"
+			type="<?php echo esc_attr( isset( $args['input_type'] ) && 'password' === $args['input_type'] ? 'password' : 'text' ); ?>"
+			id="<?php echo esc_attr( $id ); ?>"
+			name="<?php echo esc_attr( $this->get_field_name( $key ) ); ?>"
+			value="<?php echo esc_attr( is_scalar( $value ) ? (string) $value : '' ); ?>"
+			placeholder="<?php echo esc_attr( isset( $args['placeholder'] ) ? (string) $args['placeholder'] : '' ); ?>"
+			spellcheck="false"
+			autocomplete="off"
+		>
 		<?php
 		$this->render_description( $args );
 	}

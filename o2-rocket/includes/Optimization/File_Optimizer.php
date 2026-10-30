@@ -135,6 +135,10 @@ final class File_Optimizer {
 
 	// O $tag pode trazer scripts inline (before/after/traduções): só a tag com src recebe defer.
 	public function filter_script_tag( $tag, $handle = '' ) {
+		if ( in_array( 'defer_js', Html_Pipeline::get_post_exclusions(), true ) || in_array( 'all', Html_Pipeline::get_post_exclusions(), true ) ) {
+			return $tag;
+		}
+
 		if ( ! is_string( $tag ) || '' === $tag || ! $this->can_optimize() ) {
 			return $tag;
 		}
