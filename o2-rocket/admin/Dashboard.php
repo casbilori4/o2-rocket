@@ -5,6 +5,7 @@
 
 namespace O2Rocket\Admin;
 
+use O2Rocket\Cache\Cache_Engine;
 use O2Rocket\Cache\Drop_In_Manager;
 use O2Rocket\Cache\Page_Cache;
 
@@ -222,10 +223,16 @@ final class Dashboard {
 						break;
 					}
 
-					if ( $file->isFile() && in_array( $file->getFilename(), array( 'index.html', 'index-https.html' ), true ) ) {
-						++$stats['pages'];
-						$stats['bytes'] += (int) $file->getSize();
+					if ( ! $file->isFile() || ! Cache_Engine::is_cache_filename( $file->getFilename() ) ) {
+						continue;
 					}
+
+					// Cópias .gz entram no tamanho, mas não contam como página.
+					if ( '.html' === substr( $file->getFilename(), -5 ) ) {
+						++$stats['pages'];
+					}
+
+					$stats['bytes'] += (int) $file->getSize();
 				}
 			} catch ( \UnexpectedValueException $exception ) {
 				unset( $exception );

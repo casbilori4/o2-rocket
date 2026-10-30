@@ -23,19 +23,29 @@
 
 ## Arquitetura atual (resumo)
 
-- `o2-rocket.php` — constantes, requisitos, autoloader PSR-4 (`O2Rocket\Admin\` → `admin/`, `O2Rocket\` → `includes/`), helpers globais (`direct_filesystem()`, `atomic_write()`, `prepare_cache_directory()`, `run_for_each_site()`), ativação/desativação, `bootstrap()` no `plugins_loaded`.
-- `admin/Admin_UI.php` — menu, abas, Settings API renderizada como cards, CSS/JS inline. Schema via filtro `o2_rocket_settings_schema`; campos via `o2_rocket_register_settings`. Abas custom via `o2_rocket_admin_tab_{slug}`.
-- `admin/Settings.php` — schema + campos de todas as abas (toggle, textarea, ...).
-- `includes/Cache/Page_Cache.php` — buffer de saída que grava `wp-content/cache/o2-rocket/pages/{host}/{caminho}/index[-https].html`, purga por URL/tudo, exclusões.
-- `includes/Cache/Drop_In_Manager.php` — instala `drop-ins/advanced-cache.php` em `wp-content/`, liga `WP_CACHE` no wp-config, grava `wp-content/o2-rocket-config/{host}.php`.
-- `drop-ins/advanced-cache.php` — serve o HTML antes do WordPress carregar. **A normalização de host/caminho/query precisa ser idêntica à do `Page_Cache`.**
+- `o2-rocket.php` — constantes, requisitos, autoloader PSR-4 (`O2Rocket\Admin\` → `admin/`, `O2Rocket\` → `includes/`), helpers globais (`direct_filesystem()`, `atomic_write()`, `prepare_cache_directory()`, `run_for_each_site()`, `unschedule_cron_events()`), ativação/desativação, `bootstrap()` no `plugins_loaded`. Ordem dos hooks de `update_option_o2_rocket_settings`: cache (10) → pré-carregamento (20) → .htaccess (30).
+- `uninstall.php` + `includes/Core/Uninstaller.php` — desinstalação limpa (todas as opções/transients/tabelas/crons/post meta de todos os sites, drop-in, `WP_CACHE`, bloco do .htaccess, `wp-content/cache/o2-rocket/`, `wp-content/o2-rocket-config/`). Arquivos `.webp` ao lado das imagens são mantidos (outros plugins usam o mesmo nome). Novos dados persistentes precisam entrar aqui.
+- `admin/Admin_UI.php` — menu, abas, Settings API renderizada como cards, CSS/JS inline (inclui o polling do pré-carregamento). Schema via filtro `o2_rocket_settings_schema`; campos via `o2_rocket_register_settings`. Abas custom via `o2_rocket_admin_tab_{slug}`.
+- `admin/Settings.php` — schema + campos de todas as abas. Renderizadores: `render_toggle`, `render_textarea`, `render_lifespan`, `render_select`, `render_number`. Campo sem valor salvo usa o `default` do schema.
+- **Cache de página**
+  - `includes/Cache/Cache_Engine.php` — PHP puro (sem funções do WP), usado pelo drop-in **e** pelo `Page_Cache`: normalização de host/caminho/query, escolha do arquivo (`index[-mobile][-https][-q{hash}].html` + `.gz`/`.br`), exclusões por cookie/User-Agent/regex, regra da barra final, escolha da configuração por site e entrega (304, gzip/brotli, `Vary`). Qualquer regra nova de "servir ou não" vai aqui.
+  - `drop-ins/advanced-cache.php` — modelo do drop-in; o `Drop_In_Manager` troca `'{{O2_ROCKET_ENGINE}}'` pelo caminho do `Cache_Engine.php` ao instalar (sem o plugin, o drop-in não faz nada).
+  - `includes/Cache/Drop_In_Manager.php` — instala o drop-in, `WP_CACHE` no wp-config, grava `wp-content/o2-rocket-config/{host}.php` (site na raiz) ou `{host}-{md5(home_path):12}.php` (subpasta/multisite). Desligar num site remove só a configuração dele; drop-in e `WP_CACHE` saem quando não sobra nenhuma configuração.
+  - `includes/Cache/Page_Cache.php` — gera o cache (buffer em `template_redirect` 9999), opções (tempo de vida, celular, gzip, cookies/UA/parâmetros, "sempre limpar"), limpeza por evento (post, termo, usuário, comentário, menus, widgets, tema, plugins, atualizações, opções do site, permalinks, home), cron `o2_rocket_purge_expired`. Ações: `o2_rocket_after_purge_all`, `o2_rocket_after_purge_urls` (URLs realmente apagadas), `o2_rocket_after_purge_expired`, `o2_rocket_cache_saved`, `o2_rocket_manual_purge_all` (botão "Limpar todo o cache": módulos de minificação etc. devem limpar seus arquivos aqui).
+  - `includes/Cache/Cache_Controls.php` — barra do admin (tudo / esta página / este conteúdo / pré-carregar), ação "Limpar cache" na lista de posts, `admin-post.php?action=o2_rocket_purge&scope=...`, avisos.
+- **Pré-carregamento** (`includes/Preload/`)
+  - `Preload_Queue` — tabela `{prefix}o2_rocket_preload` por site (url, url_hash único, status, attempts, modified).
+  - `Sitemap_Parser` — detecta sitemaps (Yoast, Rank Math, SEOPress, AIOSEO, The SEO Framework, núcleo) e lê XML por regex (sem SimpleXML).
+  - `Preloader` — cron `o2_rocket_preload` a cada minuto enquanto houver fila; 20 s por execução, uma requisição bloqueante por vez (sem rajadas), trava por transient; sem sitemap usa posts/termos do banco; aprende URLs visitadas; a tela do painel adianta a fila via AJAX.
+  - `Link_Prefetch` + `assets/js/prefetch.js` — speculation rules do núcleo (WP 6.8+) em `prefetch`/`moderate` com exclusões; fallback em JS.
+- `includes/Server/Htaccess.php` — bloco `# BEGIN O2 Rocket` no topo do .htaccess (Brotli preferido via `SetEnvIfNoCase ... no-gzip`, GZIP, mod_expires, mod_headers). Só Apache/LiteSpeed, só o site principal no multisite; erro de escrita vira aviso com o bloco para copiar; Nginx recebe trecho equivalente no painel.
 - `includes/Optimization/File_Optimizer.php` — remove `?ver=`, defer de JS.
 - `includes/Media/*` — lazy load, WebP (GD), otimização em massa.
 - `admin/Dashboard.php`, `admin/Media_Dashboard.php` — painéis.
 
 ## Ambiente de teste (sessão do Claude)
 
-Scripts em `$SCRATCHPAD/scripts/` (não versionados): `mksite.sh <nome> <porta> [subdir]` cria WP (clone de WordPress/WordPress) + SQLite (WordPress/sqlite-database-integration); `serve.sh <nome> <porta>` sobe `php -S` com 4 workers e roteador estilo Nginx (try_files, sem .htaccess); `sync.sh` copia o plugin; `wpe` executa PHP no contexto do WP. wp-cli não está disponível (download bloqueado). Não há Apache/Nginx no contêiner: regras de .htaccess são validadas por geração/sintaxe, não por servidor real.
+Scripts em `$SCRATCHPAD/scripts/` (não versionados): `mksite.sh <nome> <porta> [subdir]` cria WP (clone de WordPress/WordPress, versão 7.2-beta) + SQLite (WordPress/sqlite-database-integration); `serve.sh <nome> <porta>` sobe `php -S` com 4 workers e roteador estilo Nginx (try_files, sem .htaccess); `sync.sh` copia o plugin; `wpe`/`wpa`/`wpm` executam PHP no contexto do WP; `login.sh` + `savetab.py` salvam abas do painel como o navegador; `shot.js` tira captura com Playwright/Chromium. wp-cli não está disponível (download bloqueado). Apache 2.4 + mod_php foi instalado no contêiner (apt) com sites em `/srv/o2test/` (o usuário www-data não atravessa a pasta temporária): `apache` (porta 8090), `multi` (multisite em subpastas, 8091), `sub/mtrix.com.br` (site em subpasta, 8092). Elementor 4.5.0 entra só como código PHP clonado do GitHub (os assets JS/CSS precisam de build com npm, que foi bloqueado pela política da sessão).
 
 ## Decisões tomadas (dúvidas resolvidas pela opção mais segura)
 
@@ -43,6 +53,16 @@ Scripts em `$SCRATCHPAD/scripts/` (não versionados): `mksite.sh <nome> <porta> 
 - Parâmetros de marketing (Fase 1.1): a lista vem de `wp-rocket/dynamic-lists.json` (`cache_ignored_parameters`), sem o parâmetro de marca do WP Rocket. Requisição só com esses parâmetros **serve** o cache existente da URL limpa, mas **nunca gera** cache. Qualquer outro parâmetro pula o cache (exceto os da lista "Parâmetros com cache próprio", que geram um arquivo separado).
 - Gzip (Fase 1.2): cópia `index[...].html.gz` (nome compatível com `gzip_static` do Nginx). O drop-in só serve o `.gz` com `Content-Encoding: gzip` se o navegador aceitar e se `zlib.output_compression`/`ob_gzhandler` não estiverem ativos (evita compressão dupla). Sempre envia `Vary: Accept-Encoding`.
 - Servir o cache direto pelo mod_rewrite (sem PHP), como o WP Rocket faz no Apache: **não** entra na Fase 1 (o drop-in já é rápido e as regras precisariam replicar todas as exclusões). Reavaliar na Fase 5.
+
+- Motor de cache compartilhado (`Cache_Engine`): o drop-in inclui o arquivo do plugin em vez de duplicar a lógica. Se a pasta do plugin sumir, o drop-in simplesmente não serve cache.
+- Configuração do drop-in por site: `{host}.php` (raiz) e `{host}-{hash}.php` (subpasta/multisite em subpastas); o drop-in escolhe pelo maior prefixo do caminho. Corrige multisite em subpastas, que antes sobrescrevia a configuração.
+- Cache separado para celular: opção, desligada por padrão (temas responsivos não precisam). Detecção idêntica ao `wp_is_mobile()` do núcleo.
+- Cópia `.br` só quando o PHP tem a extensão brotli; senão `.gz`. No Apache, as regras preferem Brotli para conteúdo dinâmico/estático.
+- Pré-carregamento usa requisições bloqueantes em série com orçamento de tempo (o WP Rocket dispara requisições não bloqueantes em rajada): mais gentil com o servidor e permite saber o resultado (redirecionamento/404 saem da fila). Desligado por padrão.
+- Regras de .htaccess ligadas por padrão (como no WP Rocket), sempre dentro de `<IfModule>`. Servir o cache direto pelo mod_rewrite fica para a Fase 5.
+- Desinstalação não apaga os `.webp` (outros plugins usam o mesmo nome de arquivo).
+- `dist/o2-rocket.zip` exclui `assets/images/source/` (logo original de 1,1 MB, não usado em tempo de execução).
+- Push para o GitHub falhou com 403 (o app do Claude não tem acesso de escrita ao repositório). Os commits ficam locais; tentar `git push -u origin claude/epic-hypatia-j4qzlg` de novo ao fim de cada fase.
 
 ## Roadmap
 
@@ -63,11 +83,22 @@ Fase 5 — CSS não utilizado e CSS crítico gerados no próprio servidor; CDN; 
 
 ## Status
 
-- [ ] Fase 1
-- [ ] Fase 2
-- [ ] Fase 3
-- [ ] Fase 4
-- [ ] Fase 5
-- [ ] COMPARATIVO.md
+- [x] **Fase 1 — Cache** (concluída)
+  - [x] Parâmetros de marketing (73 da lista + extras do usuário) servem o cache da URL limpa e nunca geram cache; parâmetros com cache próprio (opção); parâmetro desconhecido pula o cache.
+  - [x] `.gz` (e `.br` com a extensão) gravados e servidos com `Content-Encoding`, `Content-Length` e `Vary`; respeita `q=0`; sem compressão dupla (testado no Apache real).
+  - [x] Barra do admin (limpar tudo/página/conteúdo, pré-carregar), ação na lista de posts, tempo de vida configurável (minutos/horas/dias, 0 = nunca), cron de expirados que re-enfileira no pré-carregamento.
+  - [x] Pré-carregamento por sitemap (núcleo, Yoast, Rank Math, SEOPress, AIOSEO, TSF + sitemaps extras), fallback pelo banco, exclusões, celular; prefetch ao passar o mouse (speculation rules + fallback JS).
+  - [x] .htaccess (Brotli/GZIP, cache do navegador) com marcadores, removido ao desativar/desinstalar; trecho para Nginx no painel.
+  - [x] Também: cookies e User-Agents que impedem cache, "sempre limpar estas URLs", limpeza em termos/usuários/widgets/opções/atualizações/home, multisite em subpastas isolado, `uninstall.php`, Bootstrap local.
+- [ ] Fase 2 — minificar CSS/JS, atrasar JS, emojis, jQuery Migrate
+- [ ] Fase 3 — lazy load no HTML inteiro, dimensões, LCP, YouTube, WebP com perda
+- [ ] Fase 4 — fontes, preconnect, banco, Heartbeat, importar/exportar
+- [ ] Fase 5 — RUCSS/CCSS locais, CDN, Cloudflare/Varnish/Sucuri, compatibilidade; `COMPARATIVO.md`
 
-Ao terminar cada fase: `php -l`, testes no WP+SQLite, commit, push, atualizar este arquivo e gerar `dist/o2-rocket.zip`.
+Pendências conhecidas (reavaliar na Fase 5): cache para usuários logados (add-on do WP Rocket), servir o cache pelo mod_rewrite, limpeza do cache do host antigo após troca de domínio.
+
+Ao terminar cada fase: `php -l`, testes no WP+SQLite (php -S e Apache), commit, push, atualizar este arquivo e gerar o zip:
+
+```bash
+cd /home/user/o2-rocket && rm -f dist/o2-rocket.zip && mkdir -p dist && zip -rq dist/o2-rocket.zip o2-rocket -x 'o2-rocket/assets/images/source/*' -x '*.DS_Store'
+```

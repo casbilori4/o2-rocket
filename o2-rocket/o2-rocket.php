@@ -315,9 +315,16 @@ add_action( 'init', __NAMESPACE__ . '\\load_textdomain' );
 function bootstrap() {
 	$drop_in    = new Cache\Drop_In_Manager();
 	$page_cache = new Cache\Page_Cache( $drop_in );
+	$preloader  = new Preload\Preloader( $page_cache, new Preload\Preload_Queue() );
+	$htaccess   = new Server\Htaccess();
 
+	// Ordem importa nos hooks de update_option: cache (10), pré-carregamento (20), .htaccess (30).
 	$page_cache->register_hooks();
+	$preloader->register_hooks();
+	$htaccess->register_hooks();
 
+	( new Preload\Link_Prefetch( $page_cache ) )->register_hooks();
+	( new Cache\Cache_Controls( $page_cache, $preloader ) )->register_hooks();
 	( new Optimization\File_Optimizer() )->register_hooks();
 	( new Media\Lazy_Load() )->register_hooks();
 
@@ -326,7 +333,7 @@ function bootstrap() {
 
 	if ( is_admin() ) {
 		( new Admin\Admin_UI() )->register_hooks();
-		( new Admin\Settings( $drop_in ) )->register_hooks();
+		( new Admin\Settings( $drop_in, $preloader, $htaccess ) )->register_hooks();
 		( new Admin\Dashboard( $page_cache, $drop_in ) )->register_hooks();
 		( new Admin\Media_Dashboard() )->register_hooks();
 		( new Media\Bulk_Optimizer( $image_optimizer ) )->register_hooks();

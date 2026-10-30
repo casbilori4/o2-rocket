@@ -1747,6 +1747,39 @@ body.o2r-admin #wpbody-content > .update-nag {
 	color: var(--o2r-muted);
 	font-size: 14px;
 }
+.o2r-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 12px 16px;
+}
+.o2r-section-intro .o2r-preload > * + * {
+	margin-top: 16px;
+}
+.o2r-preload .o2r-bulk-progress {
+	margin-top: 0;
+}
+.o2r-preload .o2r-card-foot {
+	margin-top: 0;
+	padding-top: 0;
+	border-top: 0;
+}
+.o2r-inline-fields {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 12px;
+}
+.o2r-wrap .o2r-input-number {
+	width: 120px;
+}
+.o2r-wrap .o2r-input-unit {
+	width: auto;
+	min-width: 140px;
+}
+.o2r-wrap textarea[readonly] {
+	background: var(--o2r-subtle);
+}
 .o2r-media-dashboard {
 	margin-bottom: 8px;
 }
@@ -1940,6 +1973,59 @@ CSS;
 		if (benchmark.dataset.autorun === '1') {
 			run();
 		}
+	}
+
+	// Andamento do pré-carregamento: consulta a cada 5 s enquanto houver fila (a consulta também adianta a fila).
+	const preload = document.querySelector('[data-o2r-preload]');
+
+	if (preload && preload.dataset.running === '1') {
+		const fill = preload.querySelector('[data-o2r-preload-fill]');
+		const percent = preload.querySelector('[data-o2r-preload-percent]');
+		const status = preload.querySelector('[data-o2r-preload-status]');
+		const locale = document.documentElement.lang || 'pt-BR';
+
+		const render = (data) => {
+			const done = data.counts.completed + data.counts.failed;
+			const value = data.total > 0 ? Math.min(100, (done / data.total) * 100) : 100;
+			const shown = value > 0 && value < 10 ? Math.round(value * 10) / 10 : Math.round(value);
+
+			fill.style.width = value.toFixed(1) + '%';
+			fill.parentElement.setAttribute('aria-valuenow', String(Math.round(value)));
+			percent.textContent = shown.toLocaleString(locale, { maximumFractionDigits: 1 }) + '%';
+
+			Object.keys(data.counts).forEach((key) => {
+				const badge = preload.querySelector('[data-o2r-preload-count="' + key + '"] .o2r-badge');
+
+				if (badge) {
+					badge.textContent = data.counts[key].toLocaleString(locale);
+				}
+			});
+
+			status.textContent = data.running
+				? preload.dataset.labelProgress.replace('%1$s', done.toLocaleString(locale)).replace('%2$s', data.total.toLocaleString(locale))
+				: preload.dataset.labelDone;
+		};
+
+		const poll = () => {
+			if (document.hidden) {
+				window.setTimeout(poll, 5000);
+				return;
+			}
+
+			post(preload)
+				.then((data) => {
+					render(data);
+
+					if (data.running) {
+						window.setTimeout(poll, 5000);
+					}
+				})
+				.catch(() => {
+					status.textContent = preload.dataset.labelError;
+				});
+		};
+
+		window.setTimeout(poll, 1500);
 	}
 
 	// Fila da otimização em massa: um lote curto por requisição até não restar nada pendente.
