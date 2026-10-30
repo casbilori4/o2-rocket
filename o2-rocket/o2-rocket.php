@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       O² Rocket
  * Description:       Cache de página, otimização de arquivos, mídia e banco de dados para PageSpeed e SEO de alto desempenho.
- * Version:           1.0.0
+ * Version:           1.1.0
  * Requires at least: 6.3
  * Requires PHP:      7.4
  * Author:            Cassiano de C. Bilória
@@ -18,7 +18,7 @@ namespace O2Rocket;
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'O2_ROCKET_VERSION', '1.0.0' );
+define( 'O2_ROCKET_VERSION', '1.1.0' );
 define( 'O2_ROCKET_FILE', __FILE__ );
 define( 'O2_ROCKET_BASENAME', plugin_basename( __FILE__ ) );
 define( 'O2_ROCKET_PATH', plugin_dir_path( __FILE__ ) );
