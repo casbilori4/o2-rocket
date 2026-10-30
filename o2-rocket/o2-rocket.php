@@ -357,6 +357,117 @@ if ( ! empty( get_unmet_requirements() ) ) {
 	return;
 }
 
+// Arquivos PHP do plugin. Um upload que perde subpastas faria o autoloader falhar com erro fatal no wp-admin;
+// conferindo antes, o plugin só não carrega e avisa. Arquivo PHP novo entra nesta lista.
+function get_required_files() {
+	return array(
+		'admin/Admin_UI.php',
+		'admin/Brand.php',
+		'admin/Dashboard.php',
+		'admin/Media_Dashboard.php',
+		'admin/Post_Options.php',
+		'admin/Profiles.php',
+		'admin/Settings.php',
+		'admin/Tools.php',
+		'data/delay-js-exclusions.php',
+		'drop-ins/advanced-cache.php',
+		'includes/Addon/Cloudflare.php',
+		'includes/Addon/Sucuri.php',
+		'includes/Addon/Varnish.php',
+		'includes/Autoloader.php',
+		'includes/Cache/Cache_Controls.php',
+		'includes/Cache/Cache_Engine.php',
+		'includes/Cache/Drop_In_Manager.php',
+		'includes/Cache/Page_Cache.php',
+		'includes/Core/Request.php',
+		'includes/Core/Url_Resolver.php',
+		'includes/Database/Cleaner.php',
+		'includes/Media/Bulk_Optimizer.php',
+		'includes/Media/Css_Background_Lazy.php',
+		'includes/Media/Image_Dimensions.php',
+		'includes/Media/Image_Optimizer.php',
+		'includes/Media/Lazy_Load.php',
+		'includes/Media/Lazy_Render.php',
+		'includes/Media/Lcp_Optimizer.php',
+		'includes/Media/Lcp_Store.php',
+		'includes/Media/Resource_Hints.php',
+		'includes/Media/WebP_Editor_GD.php',
+		'includes/Optimization/Asset_Minifier.php',
+		'includes/Optimization/Cdn.php',
+		'includes/Optimization/Css_Delivery.php',
+		'includes/Optimization/Css_Parser.php',
+		'includes/Optimization/Css_Url_Rewriter.php',
+		'includes/Optimization/Css_Usage.php',
+		'includes/Optimization/Delay_Js.php',
+		'includes/Optimization/File_Optimizer.php',
+		'includes/Optimization/Google_Fonts.php',
+		'includes/Optimization/Heartbeat.php',
+		'includes/Optimization/Html_Pipeline.php',
+		'includes/Optimization/Html_Tag.php',
+		'includes/Preload/Link_Prefetch.php',
+		'includes/Preload/Preload_Queue.php',
+		'includes/Preload/Preloader.php',
+		'includes/Preload/Sitemap_Parser.php',
+		'includes/Server/Cache_Rewrite.php',
+		'includes/Server/Htaccess.php',
+		'includes/ThirdParty/Hosting.php',
+		'includes/ThirdParty/Plugins.php',
+		'vendor/matthiasmullie/minify/src/CSS.php',
+		'vendor/matthiasmullie/minify/src/Exception.php',
+		'vendor/matthiasmullie/minify/src/Exceptions/BasicException.php',
+		'vendor/matthiasmullie/minify/src/Exceptions/FileImportException.php',
+		'vendor/matthiasmullie/minify/src/Exceptions/IOException.php',
+		'vendor/matthiasmullie/minify/src/Exceptions/PatternMatchException.php',
+		'vendor/matthiasmullie/minify/src/JS.php',
+		'vendor/matthiasmullie/minify/src/Minify.php',
+		'vendor/matthiasmullie/path-converter/src/Converter.php',
+		'vendor/matthiasmullie/path-converter/src/ConverterInterface.php',
+		'vendor/matthiasmullie/path-converter/src/NoConverter.php',
+	);
+}
+
+function get_missing_files() {
+	$missing = array();
+
+	foreach ( get_required_files() as $relative ) {
+		if ( ! is_file( O2_ROCKET_PATH . $relative ) ) {
+			$missing[] = $relative;
+		}
+	}
+
+	return $missing;
+}
+
+function render_incomplete_notice() {
+	if ( ! current_user_can( 'activate_plugins' ) ) {
+		return;
+	}
+
+	$missing = get_missing_files();
+	$shown   = array_slice( $missing, 0, 5 );
+	$more    = count( $missing ) - count( $shown );
+
+	printf(
+		'<div class="notice notice-error"><p><strong>%1$s</strong></p><p>%2$s</p></div>',
+		esc_html__( 'Instalação incompleta do O² Rocket: envie o plugin de novo pelo zip.', 'o2-rocket' ),
+		esc_html(
+			sprintf(
+				/* translators: 1: lista de arquivos, 2: quantos mais faltam. */
+				__( 'O plugin não foi carregado para não derrubar o site. Faltam: %1$s%2$s.', 'o2-rocket' ),
+				implode( ', ', $shown ),
+				/* translators: %d: quantidade de arquivos. */
+				$more > 0 ? sprintf( __( ' e mais %d', 'o2-rocket' ), $more ) : ''
+			)
+		)
+	);
+}
+
+if ( ! empty( get_missing_files() ) ) {
+	add_action( 'admin_notices', __NAMESPACE__ . '\\render_incomplete_notice' );
+	add_action( 'network_admin_notices', __NAMESPACE__ . '\\render_incomplete_notice' );
+	return;
+}
+
 autoloader();
 
 function load_textdomain() {
