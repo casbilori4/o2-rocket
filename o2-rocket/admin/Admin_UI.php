@@ -15,7 +15,6 @@ final class Admin_UI {
 	const OPTION_GROUP = 'o2_rocket_settings_group';
 	const DEFAULT_TAB  = 'dashboard';
 	const TAB_FIELD    = '_o2r_tab';
-	const LOGO_PATH    = 'assets/images/logo.png';
 	const FONT_PATH    = 'assets/fonts/inter-latin-wght-normal.woff2';
 
 	// Bootstrap 5.3.8 (MIT) empacotado no plugin: o painel não depende de CDN.
@@ -325,23 +324,24 @@ final class Admin_UI {
 		<div class="wrap o2r-wrap" data-bs-theme="light">
 			<header class="o2r-topbar">
 				<div class="o2r-brand">
-					<img
-						class="o2r-brand-logo"
-						src="<?php echo esc_url( plugins_url( self::LOGO_PATH, O2_ROCKET_FILE ) ); ?>"
-						width="68"
-						height="96"
-						alt=""
-					>
+					<span class="o2r-brand-logo"><?php echo Brand::logo(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- SVG do próprio plugin. ?></span>
 					<h1 class="o2r-brand-title"><?php esc_html_e( 'O² Rocket', 'o2-rocket' ); ?></h1>
 					<span class="o2r-brand-divider" aria-hidden="true"></span>
 					<span class="o2r-brand-tagline"><?php esc_html_e( 'Performance e cache', 'o2-rocket' ); ?></span>
 				</div>
-				<span class="o2r-topbar-meta">
-					<?php
-					/* translators: %s: versão do plugin. */
-					echo esc_html( sprintf( __( 'Versão %s', 'o2-rocket' ), O2_ROCKET_VERSION ) );
-					?>
-				</span>
+				<div class="o2r-topbar-meta">
+					<span class="o2r-version">
+						<?php
+						/* translators: %s: versão do plugin. */
+						echo esc_html( sprintf( __( 'v%s', 'o2-rocket' ), O2_ROCKET_VERSION ) );
+						?>
+					</span>
+					<span class="o2r-topbar-divider" aria-hidden="true"></span>
+					<a class="o2r-credit" href="https://www.oxigenweb.com.br/" target="_blank" rel="noopener" aria-label="<?php esc_attr_e( 'Criação OxigenWeb (abre em nova aba)', 'o2-rocket' ); ?>">
+						<span class="o2r-credit-label"><?php esc_html_e( 'Criação', 'o2-rocket' ); ?></span>
+						<?php echo Brand::oxigenweb( array( 'class' => 'o2r-credit-logo' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- SVG do próprio plugin. ?>
+					</a>
+				</div>
 			</header>
 
 			<div class="o2r-shell">
@@ -757,8 +757,13 @@ body.o2r-admin #wpbody-content > .update-nag {
 .o2r-brand-logo {
 	display: block;
 	flex-shrink: 0;
-	width: auto;
 	height: 64px;
+	color: #FFFFFF;
+}
+.o2r-brand-logo svg {
+	display: block;
+	width: auto;
+	height: 100%;
 }
 .o2r-wrap .o2r-brand-title {
 	margin: 0;
@@ -783,14 +788,53 @@ body.o2r-admin #wpbody-content > .update-nag {
 	white-space: nowrap;
 }
 .o2r-topbar-meta {
-	padding: 7px 12px;
-	background: rgba(255, 255, 255, .14);
-	border: 1px solid rgba(255, 255, 255, .24);
-	border-radius: var(--o2r-radius-sm);
-	color: #FFFFFF;
-	font-size: 13px;
-	font-weight: 600;
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	flex-shrink: 0;
 	white-space: nowrap;
+}
+.o2r-version {
+	color: rgba(255, 255, 255, .6);
+	font-size: 12px;
+	font-weight: 500;
+	letter-spacing: .02em;
+}
+.o2r-topbar-divider {
+	width: 1px;
+	height: 18px;
+	background: rgba(255, 255, 255, .3);
+}
+.o2r-wrap a.o2r-credit {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	color: #FFFFFF;
+	opacity: .75;
+	text-decoration: none;
+	transition: opacity .15s ease;
+}
+.o2r-wrap a.o2r-credit:hover,
+.o2r-wrap a.o2r-credit:focus-visible {
+	color: #FFFFFF;
+	opacity: 1;
+}
+.o2r-wrap a.o2r-credit:focus-visible {
+	outline: 2px solid #FFFFFF;
+	outline-offset: 3px;
+	border-radius: 2px;
+}
+.o2r-credit-label {
+	font-size: 10px;
+	font-weight: 600;
+	letter-spacing: .12em;
+	line-height: 1;
+	text-transform: uppercase;
+}
+.o2r-credit-logo {
+	display: block;
+	width: auto;
+	height: 14px;
 }
 
 .o2r-shell {
@@ -1897,7 +1941,9 @@ body.o2r-admin #wpbody-content > .update-nag {
 		font-size: 21px;
 	}
 	.o2r-brand-divider,
-	.o2r-brand-tagline {
+	.o2r-brand-tagline,
+	.o2r-version,
+	.o2r-topbar-divider {
 		display: none;
 	}
 	.o2r-wrap .o2r-page-title {
