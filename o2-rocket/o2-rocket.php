@@ -208,6 +208,19 @@ function script_url( $path ) {
 	return plugins_url( $path, O2_ROCKET_FILE );
 }
 
+// Conteúdo de um JS do plugin para ir em linha na página (.min.js quando existe; "</script" escapado).
+function inline_script( $base ) {
+	foreach ( array( '.min.js', '.js' ) as $suffix ) {
+		$file = O2_ROCKET_PATH . $base . $suffix;
+
+		if ( is_readable( $file ) ) {
+			return str_replace( '</script', '<\/script', trim( (string) file_get_contents( $file ) ) ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+		}
+	}
+
+	return '';
+}
+
 // Sem "Deny from all": o servidor web servirá o HTML em cache direto desta pasta.
 function prepare_cache_directory() {
 	if ( ! wp_mkdir_p( O2_ROCKET_CACHE_PATH ) ) {
@@ -343,7 +356,13 @@ function bootstrap() {
 	( new Optimization\Asset_Minifier() )->register_hooks();
 	( new Optimization\Delay_Js() )->register_hooks();
 	( new Optimization\File_Optimizer() )->register_hooks();
-	( new Media\Lazy_Load() )->register_hooks();
+
+	$lazy_load = new Media\Lazy_Load();
+	$lazy_load->register_hooks();
+
+	( new Media\Css_Background_Lazy( $lazy_load ) )->register_hooks();
+	( new Media\Image_Dimensions() )->register_hooks();
+	( new Media\Lcp_Optimizer( new Media\Lcp_Store(), $page_cache ) )->register_hooks();
 
 	$image_optimizer = new Media\Image_Optimizer();
 	$image_optimizer->register_hooks();

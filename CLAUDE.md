@@ -49,7 +49,13 @@
 - `includes/Core/Url_Resolver.php` — URL do próprio site ↔ arquivo no disco (wp-content/plugins/uploads fora do padrão, WP em subpasta; nunca sai das pastas do WP).
 - `vendor/` — matthiasmullie/minify e path-converter (MIT) com namespace `O2Rocket\Vendor\...` (ver `vendor/README.md`); registrado no autoloader do `o2-rocket.php`.
 - `assets/js/*.min.js` — gerados a partir dos `.js` com a própria biblioteca (`script_url()` escolhe o `.min.js`, exceto com `SCRIPT_DEBUG`). Ao editar um `.js`, gerar o `.min.js` de novo (script `min-assets.php` do ambiente de teste, ou `new O2Rocket\Vendor\Minify\JS( $codigo )->minify()`).
-- `includes/Media/*` — lazy load, WebP (GD), otimização em massa.
+- **Mídia** (`includes/Media/`)
+  - `Lazy_Load` (etapa 40) — HTML inteiro a partir do `<body>`: `<img>`, `<picture>` (sources esperam junto, `<noscript>` com o picture inteiro), iframes, fundos em `style=""` (`var(--o2r-bg-N,none)` + `data-o2r-bg`), miniatura no lugar do YouTube (`data-o2r-iframe`). Imediatas: imagens acima da dobra medidas (`o2_rocket_lazyload_eager_urls`) ou, sem medição, as 2 primeiras + o primeiro fundo; `fetchpriority=high`/`loading=eager`; classes/atributos de exclusão; padrões do usuário. `Lazy_Load::normalize_url()` compara caminhos ignorando host, query e `.webp`.
+  - `Css_Background_Lazy` (etapa 38) — fundos em `<style>` e em arquivos CSS locais (inclusive a cópia minificada): `url()` de `background`/`background-image` → `var(--o2r-bg-{md5(url):10},none)`; cópia `min/{blog}/{nome}-bg-{hash}.css` + mapa `.json`; `window.o2rLazyBg=[{s:seletor,v:{var:url}}]` antes do `</body>`; fundos acima da dobra viram `:root{--o2r-bg-x:url()}` no `<head>`. Ignora `:hover`/`:focus`, pseudo-elementos observam o elemento.
+  - `Image_Dimensions` (etapa 35) — width/height de imagens e SVGs locais (`Url_Resolver`), completando pela proporção quando só uma medida existe.
+  - `Lcp_Optimizer` + `Lcp_Store` + `assets/js/beacon.js` (etapa 80) — beacon em linha mede LCP e acima da dobra; `admin-ajax.php?action=o2_rocket_beacon` (sem nonce, assinado com HMAC da URL+modo, 1 gravação por URL/dispositivo, limite de taxa, imagem precisa estar no HTML em cache). Tabela `{prefix}o2_rocket_lcp`. Com medição: `<link rel=preload as=image fetchpriority=high>` logo após o `<title>` (só se todos os dispositivos concordam), `fetchpriority=high` e sem `loading=lazy` no `<img>` LCP, acima da dobra fora do lazy load. Modo do dispositivo: `mobile`/`desktop` com cache separado para celular, senão `auto` (mede os dois). Medições apagadas em `o2_rocket_after_purge_all` e para as URLs limpas (exceto a limpeza disparada pelo próprio beacon).
+  - `Image_Optimizer` — WebP: JPEG com perda (qualidade configurável, editor do WP, GD ou Imagick), PNG sem perda (GD do PHP 8.1+, senão com perda q≥90); meta `_o2_rocket_webp_quality`; mudar a qualidade devolve os JPEGs à fila; troca de URLs no HTML (etapa 60) e nas cópias minificadas de CSS (`o2_rocket_minified_css`).
+  - `Bulk_Optimizer`, `WebP_Editor_GD`.
 - `admin/Dashboard.php`, `admin/Media_Dashboard.php` — painéis.
 
 ## Ambiente de teste (sessão do Claude)
@@ -75,6 +81,10 @@ Scripts em `$SCRATCHPAD/scripts/` (não versionados): `mksite.sh <nome> <porta> 
 - Combinar JS/CSS não foi implementado de propósito: com HTTP/2/3 é contraproducente e o próprio WP Rocket desliga a combinação de JS quando o atraso de JS está ativo (e removeu a de CSS).
 - Exclusões conhecidas do atraso de JS ficam ligadas por padrão para os plugins/tema ativos (o WP Rocket pede para marcar cada um): opção mais segura.
 - Padrões de exclusão inválidos como regex (há alguns nas listas originais) viram texto literal.
+- Fase 3: lazy load continua em JavaScript (IntersectionObserver, margem de 300 px) com `<noscript>`, como já era o plugin; sem medição de LCP, as 2 primeiras imagens e o primeiro fundo da página carregam de imediato.
+- Beacon de LCP sem nonce (páginas em cache duram mais que um nonce): a proteção é HMAC da URL + uma gravação por URL/dispositivo + limite de 120 gravações a cada 10 min + conferência da imagem no HTML em cache.
+- Preload da LCP só quando celular e computador concordam (sem cache separado para celular) — senão um dos dois baixaria uma imagem que não usa; o `fetchpriority` vai nos dois.
+- AVIF não foi implementado: exigiria variante de cache por cabeçalho Accept ou `<picture>`; WebP já é aceito por todos os navegadores atuais.
 - Push para o GitHub falhou com 403 (o app do Claude não tem acesso de escrita ao repositório). Os commits ficam locais; tentar `git push -u origin claude/epic-hypatia-j4qzlg` de novo ao fim de cada fase.
 
 ## Roadmap
@@ -108,7 +118,12 @@ Fase 5 — CSS não utilizado e CSS crítico gerados no próprio servidor; CDN; 
   - [x] Atrasar JS até a interação com carregador próprio, exclusões automáticas por plugin/tema ativo, serviços externos, modo seguro, tempo opcional, exclusões do usuário; correção das animações do Elementor. Testado no Chromium (ordem, eventos, jQuery ready, document.write, clique repetido).
   - [x] Remover emojis e jQuery Migrate; exclusões do defer; pipeline único de HTML (WebP migrado para ele).
   - Não feito de propósito: combinar JS/CSS (ver Decisões).
-- [ ] Fase 3 — lazy load no HTML inteiro, dimensões, LCP, YouTube, WebP com perda
+- [x] **Fase 3 — Mídia** (concluída)
+  - [x] Lazy load no HTML inteiro (cabeçalho/rodapé/Elementor, `<picture>`, iframes, fundos em `style`) e fundos em CSS (arquivos e `<style>`, testado com o CSS de seções/colunas do Elementor).
+  - [x] Dimensões faltando (imagens e SVGs locais).
+  - [x] Beacon local de LCP/acima da dobra → preload + `fetchpriority` + exclusão do lazy load; testado no Chromium (gravou `bg-img` do herói e a página seguinte saiu com preload e `:root` do fundo).
+  - [x] Miniatura do YouTube com play/autoplay.
+  - [x] WebP com perda para JPEG (qualidade configurável, reprocessamento automático) e WebP também no CSS minificado.
 - [ ] Fase 4 — fontes, preconnect, banco, Heartbeat, importar/exportar
 - [ ] Fase 5 — RUCSS/CCSS locais, CDN, Cloudflare/Varnish/Sucuri, compatibilidade; `COMPARATIVO.md`
 

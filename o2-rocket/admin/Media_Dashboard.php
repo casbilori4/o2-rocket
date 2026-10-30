@@ -51,7 +51,13 @@ final class Media_Dashboard {
 		<section class="o2r-card o2r-dark-card">
 			<header class="o2r-dark-header">
 				<h3 class="o2r-dark-title"><?php esc_html_e( 'Otimização em massa', 'o2-rocket' ); ?></h3>
-				<span class="o2r-dark-meta"><?php esc_html_e( 'WebP lossless · qualidade 100%', 'o2-rocket' ); ?></span>
+				<span class="o2r-dark-meta">
+					<?php
+					$quality = ( new Image_Optimizer() )->get_quality();
+					/* translators: %d: qualidade do WebP para JPEG. */
+					echo esc_html( $quality < 100 ? sprintf( __( 'WebP · JPEG com qualidade %d · PNG sem perda', 'o2-rocket' ), $quality ) : __( 'WebP sem perda · qualidade 100%', 'o2-rocket' ) );
+					?>
+				</span>
 			</header>
 
 			<div class="o2r-overview">
@@ -163,10 +169,10 @@ final class Media_Dashboard {
 
 	private function render_bulk_action( array $stats ): void {
 		$pending   = (int) $stats['pending'];
-		$supported = Image_Optimizer::server_supports_lossless();
+		$supported = Image_Optimizer::server_supports_lossless() || Image_Optimizer::server_supports_lossy();
 
 		if ( ! $supported ) {
-			$status = __( 'Este servidor não gera WebP lossless: o PHP precisa ser 8.1+ com GD compilado com suporte a WebP.', 'o2-rocket' );
+			$status = __( 'Este servidor não gera WebP: o PHP precisa ter o GD ou o Imagick com suporte a WebP.', 'o2-rocket' );
 		} elseif ( $pending > 0 ) {
 			/* translators: %s: quantidade de imagens. */
 			$status = sprintf( _n( '%s imagem aguardando otimização.', '%s imagens aguardando otimização.', $pending, 'o2-rocket' ), number_format_i18n( $pending ) );
@@ -200,7 +206,7 @@ final class Media_Dashboard {
 			</header>
 			<div class="o2r-card-body">
 				<p class="o2r-muted o2r-bulk-intro">
-					<?php esc_html_e( 'Cada imagem e todos os seus tamanhos são convertidos para WebP lossless (qualidade 100%). Quando o WebP não fica menor que o original, ele é descartado e o original continua sendo usado — comum em JPEGs, que já são comprimidos.', 'o2-rocket' ); ?>
+					<?php esc_html_e( 'Cada imagem e todos os seus tamanhos ganham uma versão WebP: JPEGs com a qualidade escolhida em Mídia (visualmente igual, 25 a 35% menor) e PNGs sem perda. Quando o WebP não fica menor que o original, ele é descartado e o original continua sendo usado. Os originais nunca são alterados.', 'o2-rocket' ); ?>
 				</p>
 
 				<div class="o2r-bulk-progress">

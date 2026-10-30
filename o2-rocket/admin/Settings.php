@@ -8,8 +8,10 @@ namespace O2Rocket\Admin;
 use O2Rocket\Cache\Cache_Controls;
 use O2Rocket\Cache\Drop_In_Manager;
 use O2Rocket\Cache\Page_Cache;
+use O2Rocket\Media\Image_Dimensions;
 use O2Rocket\Media\Image_Optimizer;
 use O2Rocket\Media\Lazy_Load;
+use O2Rocket\Media\Lcp_Optimizer;
 use O2Rocket\Optimization\Asset_Minifier;
 use O2Rocket\Optimization\Delay_Js;
 use O2Rocket\Optimization\File_Optimizer;
@@ -277,6 +279,45 @@ final class Settings {
 			'default' => false,
 		);
 
+		$schema[ Lazy_Load::SETTING_YOUTUBE ] = array(
+			'tab'     => self::TAB_MEDIA,
+			'type'    => 'bool',
+			'default' => false,
+		);
+
+		$schema[ Lazy_Load::SETTING_CSS_BG ] = array(
+			'tab'     => self::TAB_MEDIA,
+			'type'    => 'bool',
+			'default' => false,
+		);
+
+		$schema[ Lazy_Load::SETTING_EXCLUDED ] = array(
+			'tab'               => self::TAB_MEDIA,
+			'type'              => 'lines',
+			'default'           => array(),
+			'sanitize_callback' => array( self::class, 'sanitize_file_patterns' ),
+		);
+
+		$schema[ Image_Dimensions::SETTING_ENABLED ] = array(
+			'tab'     => self::TAB_MEDIA,
+			'type'    => 'bool',
+			'default' => false,
+		);
+
+		$schema[ Lcp_Optimizer::SETTING_ENABLED ] = array(
+			'tab'     => self::TAB_MEDIA,
+			'type'    => 'bool',
+			'default' => false,
+		);
+
+		$schema[ Image_Optimizer::SETTING_QUALITY ] = array(
+			'tab'     => self::TAB_MEDIA,
+			'type'    => 'int',
+			'default' => Image_Optimizer::DEFAULT_QUALITY,
+			'min'     => 50,
+			'max'     => 100,
+		);
+
 		$schema[ Image_Optimizer::SETTING_AUTO ] = array(
 			'tab'     => self::TAB_MEDIA,
 			'type'    => 'bool',
@@ -318,7 +359,21 @@ final class Settings {
 				'label_for'   => 'o2r-lazyload-images',
 				'key'         => Lazy_Load::SETTING_IMAGES,
 				'label'       => __( 'Carregar imagens só quando estiverem perto de aparecer na tela', 'o2-rocket' ),
-				'description' => __( 'Vale para as imagens do conteúdo dos posts e as imagens destacadas. A primeira imagem da página, a primeira imagem do conteúdo do post e as imagens que o WordPress marca como prioritárias (LCP) carregam sempre de imediato.', 'o2-rocket' ),
+				'description' => __( 'Vale para a página inteira: conteúdo, cabeçalho, rodapé, widgets e construtores como o Elementor (inclusive <picture>). As imagens acima da dobra medidas pela otimização da LCP, as duas primeiras da página enquanto não há medição e as que o WordPress marca como prioritárias carregam de imediato.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Lazy_Load::SETTING_CSS_BG,
+			__( 'Lazy Load para imagens de fundo', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_lazyload',
+			array(
+				'label_for'   => 'o2r-lazyload-css-bg',
+				'key'         => Lazy_Load::SETTING_CSS_BG,
+				'label'       => __( 'Carregar fundos (background-image) só quando a seção chega perto da tela', 'o2-rocket' ),
+				'description' => __( 'Fundos em style="" e em CSS (arquivos locais e blocos <style>), como os das seções e colunas do Elementor. Fundos de :hover ficam como estão; o primeiro fundo da página e os acima da dobra medidos carregam de imediato.', 'o2-rocket' ),
 			)
 		);
 
@@ -331,8 +386,72 @@ final class Settings {
 			array(
 				'label_for'   => 'o2r-lazyload-iframes',
 				'key'         => Lazy_Load::SETTING_IFRAMES,
-				'label'       => __( 'Carregar vídeos do YouTube/Vimeo, mapas e outros iframes do conteúdo sob demanda', 'o2-rocket' ),
+				'label'       => __( 'Carregar vídeos do YouTube/Vimeo, mapas e outros iframes da página sob demanda', 'o2-rocket' ),
 				'description' => __( 'Iframes que apontam para o painel do WordPress e os que estão dentro de <noscript> não são alterados.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Lazy_Load::SETTING_YOUTUBE,
+			__( 'Miniatura no lugar do YouTube', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_lazyload',
+			array(
+				'label_for'   => 'o2r-lazyload-youtube',
+				'key'         => Lazy_Load::SETTING_YOUTUBE,
+				'label'       => __( 'Mostrar a capa do vídeo com um botão de play e carregar o player só no clique', 'o2-rocket' ),
+				'description' => __( 'Cada player do YouTube traz mais de 500 KB de JavaScript. A capa vem de i.ytimg.com (servidor do YouTube) e o vídeo começa sozinho ao clicar.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Lazy_Load::SETTING_EXCLUDED,
+			__( 'Nunca aplicar lazy load em', 'o2-rocket' ),
+			array( $this, 'render_textarea' ),
+			$page,
+			'o2r_lazyload',
+			array(
+				'label_for'   => 'o2r-lazyload-excluded',
+				'key'         => Lazy_Load::SETTING_EXCLUDED,
+				'rows'        => 3,
+				'placeholder' => "logo.png\nslider-principal\ngravatar.com",
+				'description' => __( 'Trecho do nome do arquivo, de uma classe ou de qualquer atributo da tag, um por linha. Também é possível marcar a tag com a classe skip-lazy ou o atributo data-no-lazy.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_section(
+			'o2r_lcp',
+			__( 'Imagem principal e layout', 'o2-rocket' ),
+			array( $this, 'render_lcp_section' ),
+			$page
+		);
+
+		add_settings_field(
+			Lcp_Optimizer::SETTING_ENABLED,
+			__( 'Otimizar a imagem LCP', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_lcp',
+			array(
+				'label_for'   => 'o2r-lcp',
+				'key'         => Lcp_Optimizer::SETTING_ENABLED,
+				'label'       => __( 'Medir a imagem principal de cada página e carregá-la primeiro', 'o2-rocket' ),
+				'description' => __( 'Um script de 2 KB no navegador do primeiro visitante descobre a imagem LCP e as imagens acima da dobra (no celular e no computador). A partir daí a página sai com preload e fetchpriority="high" nessa imagem e sem lazy load acima da dobra. Tudo no seu servidor, sem serviço externo.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Image_Dimensions::SETTING_ENABLED,
+			__( 'Dimensões das imagens', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_lcp',
+			array(
+				'label_for'   => 'o2r-image-dimensions',
+				'key'         => Image_Dimensions::SETTING_ENABLED,
+				'label'       => __( 'Acrescentar width e height às imagens que não têm', 'o2-rocket' ),
+				'description' => __( 'O navegador reserva o espaço da imagem antes de ela chegar e o conteúdo não "pula" (CLS). Vale para imagens e SVGs do próprio site.', 'o2-rocket' ),
 			)
 		);
 
@@ -352,8 +471,24 @@ final class Settings {
 			array(
 				'label_for'   => 'o2r-webp-auto',
 				'key'         => Image_Optimizer::SETTING_AUTO,
-				'label'       => __( 'Gerar a versão WebP lossless ao enviar uma imagem para a biblioteca', 'o2-rocket' ),
+				'label'       => __( 'Gerar a versão WebP ao enviar uma imagem para a biblioteca', 'o2-rocket' ),
 				'description' => __( 'Converte o arquivo enviado e todos os tamanhos gerados pelo WordPress. O envio fica alguns segundos mais lento em imagens grandes.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Image_Optimizer::SETTING_QUALITY,
+			__( 'Qualidade do WebP para JPEG', 'o2-rocket' ),
+			array( $this, 'render_number' ),
+			$page,
+			'o2r_webp',
+			array(
+				'label_for'   => 'o2r-webp-quality',
+				'key'         => Image_Optimizer::SETTING_QUALITY,
+				'min'         => 50,
+				'max'         => 100,
+				'suffix'      => '%',
+				'description' => __( '82 (padrão) fica visualmente igual ao JPEG e 25 a 35% menor. 100 = sem perda (raramente menor que o JPEG). PNG é sempre convertido sem perda. Ao mudar, os JPEGs voltam para a fila da otimização em massa.', 'o2-rocket' ),
 			)
 		);
 
@@ -1267,7 +1402,15 @@ final class Settings {
 	public function render_media_section(): void {
 		?>
 		<p class="o2r-muted">
-			<?php esc_html_e( 'Usa a API nativa IntersectionObserver do navegador (script com menos de 2 KB, sem jQuery). Sem JavaScript, uma cópia original de cada mídia é exibida via <noscript>.', 'o2-rocket' ); ?>
+			<?php esc_html_e( 'Usa a API nativa IntersectionObserver do navegador (script de cerca de 3 KB, sem jQuery). Sem JavaScript, uma cópia original de cada imagem e iframe é exibida via <noscript>.', 'o2-rocket' ); ?>
+		</p>
+		<?php
+	}
+
+	public function render_lcp_section(): void {
+		?>
+		<p class="o2r-muted">
+			<?php esc_html_e( 'A LCP (Largest Contentful Paint) é o tempo até a maior imagem ou bloco de texto aparecer, uma das métricas do PageSpeed e do Core Web Vitals.', 'o2-rocket' ); ?>
 		</p>
 		<?php
 	}

@@ -6,6 +6,7 @@
 namespace O2Rocket\Core;
 
 use O2Rocket\Cache\Drop_In_Manager;
+use O2Rocket\Media\Lcp_Store;
 use O2Rocket\Preload\Preload_Queue;
 use O2Rocket\Server\Htaccess;
 
@@ -27,6 +28,7 @@ final class Uninstaller {
 		'o2_rocket_preload_state',
 		'o2_rocket_preload_db_version',
 		'o2_rocket_htaccess_status',
+		'o2_rocket_webp_quality_migrated',
 	);
 
 	// Metadados gravados nos anexos pela otimização de imagens (os arquivos .webp ficam: outros plugins usam o mesmo nome).
@@ -35,6 +37,7 @@ final class Uninstaller {
 		'_o2_rocket_original_size',
 		'_o2_rocket_optimized_size',
 		'_o2_rocket_error',
+		'_o2_rocket_webp_quality',
 	);
 
 	public static function run(): void {
@@ -56,6 +59,7 @@ final class Uninstaller {
 		unschedule_cron_events();
 
 		( new Preload_Queue() )->drop();
+		( new Lcp_Store() )->drop();
 
 		foreach ( (array) apply_filters( 'o2_rocket_uninstall_options', self::OPTIONS ) as $option ) {
 			delete_option( (string) $option );

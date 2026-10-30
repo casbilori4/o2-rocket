@@ -5,6 +5,8 @@
 
 namespace O2Rocket\Optimization;
 
+use function O2Rocket\inline_script;
+
 defined( 'ABSPATH' ) || exit;
 
 // Atrasa a execução dos scripts até a primeira interação do visitante (mouse, toque, teclado, rolagem da roda).
@@ -298,11 +300,11 @@ final class Delay_Js {
 
 	private function insert_loader( string $html ): string {
 		$timeout = max( 0, min( 60, (int) $this->get_settings()[ self::SETTING_TIMEOUT ] ) );
-		$script  = '<script id="o2r-delay-loader" data-o2r-nodelay>window.o2rDelay=' . wp_json_encode( array( 'timeout' => $timeout ) ) . ';' . self::read_asset( self::LOADER_FILE ) . '</script>';
+		$script  = '<script id="o2r-delay-loader" data-o2r-nodelay>window.o2rDelay=' . wp_json_encode( array( 'timeout' => $timeout ) ) . ';' . inline_script( self::LOADER_FILE ) . '</script>';
 
 		// Animações de entrada do Elementor esperariam o JS: as visíveis na tela aparecem já.
 		if ( false !== strpos( $html, 'elementor-invisible' ) ) {
-			$script .= '<script id="o2r-elementor-animations" data-o2r-nodelay>' . self::read_asset( self::ELEMENTOR_FILE ) . '</script>';
+			$script .= '<script id="o2r-elementor-animations" data-o2r-nodelay>' . inline_script( self::ELEMENTOR_FILE ) . '</script>';
 		}
 
 		$position = stripos( $html, '</head>' );
@@ -312,18 +314,5 @@ final class Delay_Js {
 		}
 
 		return substr_replace( $html, $script, $position, 0 );
-	}
-
-	// Versão .min.js quando existe; o conteúdo vai em linha (sem requisição extra).
-	private static function read_asset( string $base ): string {
-		foreach ( array( '.min.js', '.js' ) as $suffix ) {
-			$file = O2_ROCKET_PATH . $base . $suffix;
-
-			if ( is_readable( $file ) ) {
-				return str_replace( '</script', '<\/script', trim( (string) file_get_contents( $file ) ) ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
-			}
-		}
-
-		return '';
 	}
 }

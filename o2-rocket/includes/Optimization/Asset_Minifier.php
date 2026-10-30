@@ -240,7 +240,8 @@ final class Asset_Minifier {
 			$minified = Css_Url_Rewriter::add_font_display( $minified );
 		}
 
-		return $minified;
+		// Outros módulos ajustam a cópia (ex.: imagens .jpg/.png trocadas pelo .webp).
+		return (string) apply_filters( 'o2_rocket_minified_css', $minified );
 	}
 
 	private function minify_js( string $source ): string {
