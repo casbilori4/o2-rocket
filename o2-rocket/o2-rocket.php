@@ -527,7 +527,7 @@ function bootstrap() {
 
 		( new Admin\Tools( $admin_ui, $page_cache, $drop_in, $preloader, $htaccess ) )->register_hooks();
 		( new Admin\Settings( $drop_in, $preloader, $htaccess ) )->register_hooks();
-		( new Admin\Dashboard( $page_cache, $drop_in ) )->register_hooks();
+		( new Admin\Dashboard( $page_cache, $drop_in, $preloader ) )->register_hooks();
 		( new Admin\Media_Dashboard() )->register_hooks();
 		( new Admin\Post_Options( $page_cache ) )->register_hooks();
 		( new Admin\Profiles( $admin_ui, $page_cache, $preloader ) )->register_hooks();

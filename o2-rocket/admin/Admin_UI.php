@@ -623,8 +623,10 @@ final class Admin_UI {
 		foreach ( $fields as $field ) {
 			$args      = isset( $field['args'] ) ? (array) $field['args'] : array();
 			$row_class = empty( $args['class'] ) ? '' : ' ' . $args['class'];
+			// Campo que depende de outro (requires = id do interruptor): fica esmaecido enquanto o outro está desligado.
+			$requires = empty( $args['requires'] ) ? '' : (string) $args['requires'];
 			?>
-			<div class="<?php echo esc_attr( 'o2r-field' . $row_class ); ?>">
+			<div class="<?php echo esc_attr( 'o2r-field' . $row_class ); ?>"<?php echo '' !== $requires ? ' data-o2r-requires="' . esc_attr( $requires ) . '"' : ''; ?>>
 				<div class="o2r-field-label">
 					<?php if ( ! empty( $args['label_for'] ) ) : ?>
 						<label for="<?php echo esc_attr( $args['label_for'] ); ?>"><?php echo esc_html( $field['title'] ); ?></label>
@@ -997,6 +999,18 @@ body.o2r-admin #wpbody-content > .update-nag {
 	padding: 24px 0;
 	border-top: 1px solid var(--o2r-border);
 }
+.o2r-field--inactive .o2r-field-label,
+.o2r-field--inactive .o2r-field-control {
+	opacity: .5;
+}
+
+.o2r-code-line {
+	display: inline-block;
+	max-width: 100%;
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+
 .o2r-field:first-child {
 	padding-top: 0;
 	border-top: 0;
@@ -2276,6 +2290,19 @@ CSS;
 		}
 	}
 
+	document.querySelectorAll('[data-o2r-requires]').forEach((field) => {
+		const control = document.getElementById(field.dataset.o2rRequires);
+
+		if (!control) {
+			return;
+		}
+
+		const sync = () => field.classList.toggle('o2r-field--inactive', !control.checked);
+
+		control.addEventListener('change', sync);
+		sync();
+	});
+
 	// Andamento do pré-carregamento: consulta a cada 5 s enquanto houver fila (a consulta também adianta a fila).
 	const preload = document.querySelector('[data-o2r-preload]');
 
@@ -2286,8 +2313,8 @@ CSS;
 		const locale = document.documentElement.lang || 'pt-BR';
 
 		const render = (data) => {
-			const done = data.counts.completed + data.counts.failed;
-			const value = data.total > 0 ? Math.min(100, (done / data.total) * 100) : 100;
+			const done = data.progress.done;
+			const value = data.progress.total > 0 ? Math.min(100, (done / data.progress.total) * 100) : 100;
 			const shown = value > 0 && value < 10 ? Math.round(value * 10) / 10 : Math.round(value);
 
 			fill.style.width = value.toFixed(1) + '%';
@@ -2303,7 +2330,7 @@ CSS;
 			});
 
 			status.textContent = data.running
-				? preload.dataset.labelProgress.replace('%1$s', done.toLocaleString(locale)).replace('%2$s', data.total.toLocaleString(locale))
+				? preload.dataset.labelProgress.replace('%1$s', done.toLocaleString(locale)).replace('%2$s', data.progress.total.toLocaleString(locale))
 				: preload.dataset.labelDone;
 		};
 

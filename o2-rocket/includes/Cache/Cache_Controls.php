@@ -10,7 +10,8 @@ use O2Rocket\Preload\Preloader;
 
 defined( 'ABSPATH' ) || exit;
 
-// "Limpar cache" na barra do admin, na lista de posts e no painel; aviso do resultado na tela seguinte.
+// "Limpar cache" e "Limpar e pré-carregar" na barra do admin, na lista de posts e no painel; aviso do resultado
+// (com o andamento do pré-carregamento) na tela seguinte, no painel ou no site.
 final class Cache_Controls {
 
 	const ACTION        = 'o2_rocket_purge';
@@ -31,7 +32,9 @@ final class Cache_Controls {
 		add_action( 'admin_enqueue_scripts', array( $this, 'add_admin_bar_style' ) );
 		add_action( 'admin_post_' . self::ACTION, array( $this, 'handle_action' ) );
 		add_action( 'admin_notices', array( $this, 'render_notice' ) );
+		add_action( 'wp_footer', array( $this, 'render_front_notice' ) );
 		add_action( 'o2_rocket_admin_alerts', array( $this, 'render_health_alert' ) );
+		add_action( 'o2_rocket_admin_alerts', array( $this, 'render_cron_alert' ) );
 		add_filter( 'post_row_actions', array( $this, 'filter_row_actions' ), 10, 2 );
 		add_filter( 'page_row_actions', array( $this, 'filter_row_actions' ), 10, 2 );
 	}
@@ -40,7 +43,8 @@ final class Cache_Controls {
 		return (string) apply_filters( 'o2_rocket_capability', 'manage_options' );
 	}
 
-	// Escopos: all (tudo), url (uma página), post (post e relacionados), preload (pré-carregar), repair (drop-in), opcache.
+	// Escopos: all (tudo), url (uma página), post (post e relacionados), preload (pré-carregar), purge_preload,
+	// purge_preload_url e purge_preload_post (limpar e já pré-carregar), repair (drop-in), opcache.
 	// O OPcache é do servidor inteiro: só administradores.
 	public static function can_reset_opcache(): bool {
 		return function_exists( 'opcache_reset' ) && filter_var( ini_get( 'opcache.enable' ), FILTER_VALIDATE_BOOLEAN ) && current_user_can( 'manage_options' );
@@ -108,6 +112,48 @@ final class Cache_Controls {
 		<?php
 	}
 
+	// WP-Cron parado com fila pendente: o comando de cron do servidor e a linha do wp-config.
+	public function render_cron_alert(): void {
+		$stall = $this->preloader->get_stall();
+
+		if ( empty( $stall ) ) {
+			return;
+		}
+
+		$command = 'wget -q -O - "' . site_url( 'wp-cron.php?doing_wp_cron' ) . '" >/dev/null 2>&1';
+		?>
+		<div class="o2r-notice o2r-notice--warning o2r-cron-alert" role="alert">
+			<div class="o2r-notice-message">
+				<p>
+					<strong><?php esc_html_e( 'O pré-carregamento está parado: o WP-Cron não está rodando.', 'o2-rocket' ); ?></strong>
+					<?php
+					echo esc_html(
+						$stall['since'] > 0
+							/* translators: 1: tempo, 2: quantidade de páginas. */
+							? sprintf( _n( 'A última execução foi há %1$s e %2$s página espera na fila.', 'A última execução foi há %1$s e %2$s páginas esperam na fila.', $stall['pending'], 'o2-rocket' ), human_time_diff( $stall['since'] ), number_format_i18n( $stall['pending'] ) )
+							/* translators: %s: quantidade de páginas. */
+							: sprintf( _n( 'Ele ainda não rodou e %s página espera na fila.', 'Ele ainda não rodou e %s páginas esperam na fila.', $stall['pending'], 'o2-rocket' ), number_format_i18n( $stall['pending'] ) )
+					);
+					?>
+				</p>
+				<p><?php esc_html_e( 'O WP-Cron só roda quando o site recebe visitas e algumas hospedagens o bloqueiam. Crie uma tarefa no cPanel (Cron Jobs → a cada 5 minutos, */5 * * * *) com o comando:', 'o2-rocket' ); ?></p>
+				<p><code class="o2r-code-line"><?php echo esc_html( $command ); ?></code></p>
+				<p>
+					<?php
+					if ( $stall['disabled'] ) {
+						esc_html_e( 'O wp-config.php já tem DISABLE_WP_CRON ativo: sem essa tarefa, nada agendado roda no site.', 'o2-rocket' );
+					} else {
+						esc_html_e( 'Depois, adicione ao wp-config.php (antes da linha "That\'s all, stop editing!"), para as visitas não dispararem o WP-Cron de novo:', 'o2-rocket' );
+						echo ' <code>define( \'DISABLE_WP_CRON\', true );</code>';
+					}
+					?>
+				</p>
+				<p class="o2r-muted"><?php esc_html_e( 'Enquanto isso, a fila avança um pouco sempre que um administrador abre o painel.', 'o2-rocket' ); ?></p>
+			</div>
+		</div>
+		<?php
+	}
+
 	public function add_admin_bar_menu( $bar ): void {
 		if ( ! $bar instanceof \WP_Admin_Bar || ! current_user_can( self::get_capability() ) || ( is_multisite() && is_network_admin() ) ) {
 			return;
@@ -130,6 +176,19 @@ final class Cache_Controls {
 			)
 		);
 
+		$preload = $this->preloader->is_enabled();
+
+		if ( $preload ) {
+			$bar->add_node(
+				array(
+					'parent' => 'o2-rocket',
+					'id'     => 'o2-rocket-purge-preload',
+					'title'  => esc_html__( 'Limpar e pré-carregar', 'o2-rocket' ),
+					'href'   => self::get_action_url( 'purge_preload' ),
+				)
+			);
+		}
+
 		$current = $this->get_current_page_url();
 
 		if ( '' !== $current ) {
@@ -141,6 +200,17 @@ final class Cache_Controls {
 					'href'   => self::get_action_url( 'url', array( 'url' => $current ) ),
 				)
 			);
+
+			if ( $preload ) {
+				$bar->add_node(
+					array(
+						'parent' => 'o2-rocket',
+						'id'     => 'o2-rocket-purge-preload-url',
+						'title'  => esc_html__( 'Limpar e pré-carregar esta página', 'o2-rocket' ),
+						'href'   => self::get_action_url( 'purge_preload_url', array( 'url' => $current ) ),
+					)
+				);
+			}
 		}
 
 		$post_id = $this->get_edited_post_id();
@@ -156,7 +226,7 @@ final class Cache_Controls {
 			);
 		}
 
-		if ( $this->preloader->is_enabled() ) {
+		if ( $preload ) {
 			$bar->add_node(
 				array(
 					'parent' => 'o2-rocket',
@@ -198,7 +268,40 @@ final class Cache_Controls {
 			wp_die( esc_html__( 'Você não tem permissão para limpar o cache.', 'o2-rocket' ), '', array( 'response' => 403 ) );
 		}
 
+		$progress = false;
+
 		switch ( $scope ) {
+			case 'purge_preload':
+				$deleted = $this->page_cache->purge_all();
+
+				do_action( 'o2_rocket_manual_purge_all' );
+
+				$progress = $this->preloader->start();
+				$message  = $deleted ? __( 'Todo o cache foi limpo.', 'o2-rocket' ) : __( 'Parte do cache não pôde ser apagada (verifique as permissões da pasta wp-content/cache).', 'o2-rocket' );
+				$message .= ' ' . ( $progress ? __( 'Pré-carregando agora: a home primeiro, depois o menu principal e as páginas que estavam em cache.', 'o2-rocket' ) : __( 'O pré-carregamento está desligado ou não pôde ser iniciado.', 'o2-rocket' ) );
+				break;
+
+			case 'purge_preload_url':
+				$url = isset( $_GET['url'] ) ? esc_url_raw( wp_unslash( $_GET['url'] ) ) : '';
+
+				if ( ! $this->is_own_url( $url ) || ! $this->page_cache->purge_url( $url ) ) {
+					$message = __( 'Não foi possível limpar o cache desta página.', 'o2-rocket' );
+					break;
+				}
+
+				$progress = $this->preloader->preload_purged( array( $url ) );
+				$message  = $progress ? __( 'Cache desta página limpo; ela está sendo gerada de novo.', 'o2-rocket' ) : __( 'Cache desta página limpo.', 'o2-rocket' );
+				break;
+
+			case 'purge_preload_post':
+				$post_id = isset( $_GET['post'] ) ? absint( $_GET['post'] ) : 0;
+
+				$this->page_cache->purge_post( $post_id );
+
+				$progress = 'publish' === get_post_status( $post_id ) && $this->preloader->preload_purged( array( (string) get_permalink( $post_id ) ) );
+				$message  = $progress ? __( 'Cache do conteúdo e das páginas relacionadas limpo; pré-carregando agora.', 'o2-rocket' ) : __( 'Cache do conteúdo e das páginas relacionadas limpo.', 'o2-rocket' );
+				break;
+
 			case 'url':
 				$url     = isset( $_GET['url'] ) ? esc_url_raw( wp_unslash( $_GET['url'] ) ) : '';
 				$message = $this->is_own_url( $url ) && $this->page_cache->purge_url( $url )
@@ -226,7 +329,8 @@ final class Cache_Controls {
 				break;
 
 			case 'preload':
-				$message = $this->preloader->start()
+				$progress = $this->preloader->start();
+				$message  = $progress
 					? __( 'Pré-carregamento iniciado. As páginas serão geradas em segundo plano.', 'o2-rocket' )
 					: __( 'O pré-carregamento está desligado ou não pôde ser iniciado.', 'o2-rocket' );
 				break;
@@ -241,7 +345,7 @@ final class Cache_Controls {
 				break;
 		}
 
-		self::add_notice( $message );
+		self::add_notice( $message, $progress );
 
 		$redirect = wp_get_referer();
 
@@ -260,24 +364,114 @@ final class Cache_Controls {
 			esc_html__( 'Limpar cache', 'o2-rocket' )
 		);
 
+		if ( $this->preloader->is_enabled() ) {
+			$actions['o2_rocket_purge_preload'] = sprintf(
+				'<a href="%1$s">%2$s</a>',
+				esc_url( self::get_action_url( 'purge_preload_post', array( 'post' => (string) $post->ID ) ) ),
+				esc_html__( 'Limpar e pré-carregar', 'o2-rocket' )
+			);
+		}
+
 		return $actions;
 	}
 
 	public function render_notice(): void {
-		$key     = self::NOTICE_PREFIX . get_current_user_id();
-		$message = get_transient( $key );
+		$notice = self::take_notice();
 
-		if ( ! is_string( $message ) || '' === $message ) {
+		if ( null === $notice ) {
 			return;
+		}
+
+		printf(
+			'<div class="notice notice-success is-dismissible"><p><strong>%1$s</strong> %2$s%3$s</p></div>',
+			esc_html__( 'O² Rocket:', 'o2-rocket' ),
+			esc_html( $notice['message'] ),
+			$notice['progress'] ? ' ' . $this->get_progress_html() : '' // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escapado em get_progress_html().
+		);
+	}
+
+	// Ações disparadas pela barra do admin no site voltam para a página: o aviso aparece num canto da tela.
+	public function render_front_notice(): void {
+		if ( is_admin() || ! is_admin_bar_showing() || ! current_user_can( self::get_capability() ) ) {
+			return;
+		}
+
+		$notice = self::take_notice();
+
+		if ( null === $notice ) {
+			return;
+		}
+
+		$css = '#o2r-front-notice{position:fixed;right:16px;bottom:16px;z-index:100000;max-width:min(420px,calc(100vw - 32px));box-sizing:border-box;padding:12px 40px 12px 14px;border-left:4px solid #00A32A;border-radius:4px;background:#fff;color:#1D2327;box-shadow:0 6px 24px rgba(0,0,0,.18);font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}'
+			. '#o2r-front-notice p{margin:0;font:inherit;color:inherit}'
+			. '#o2r-front-notice button{position:absolute;top:6px;right:6px;width:28px;height:28px;padding:0;border:0;background:none;color:#50575E;font-size:18px;line-height:28px;cursor:pointer}';
+		?>
+		<style id="o2r-front-notice-css"><?php echo $css; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- CSS fixo. ?></style>
+		<div id="o2r-front-notice" role="status">
+			<p><strong><?php esc_html_e( 'O² Rocket:', 'o2-rocket' ); ?></strong> <?php echo esc_html( $notice['message'] ); ?><?php echo $notice['progress'] ? ' ' . $this->get_progress_html() : ''; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escapado em get_progress_html(). ?></p>
+			<button type="button" aria-label="<?php esc_attr_e( 'Fechar', 'o2-rocket' ); ?>" onclick="this.parentNode.remove()">&times;</button>
+		</div>
+		<?php
+	}
+
+	public static function add_notice( string $message, bool $progress = false ): void {
+		set_transient(
+			self::NOTICE_PREFIX . get_current_user_id(),
+			array(
+				'message'  => $message,
+				'progress' => $progress,
+			),
+			MINUTE_IN_SECONDS
+		);
+	}
+
+	private static function take_notice(): ?array {
+		$key    = self::NOTICE_PREFIX . get_current_user_id();
+		$notice = get_transient( $key );
+
+		if ( is_string( $notice ) ) {
+			$notice = array( 'message' => $notice );
+		}
+
+		if ( ! is_array( $notice ) || empty( $notice['message'] ) ) {
+			return null;
 		}
 
 		delete_transient( $key );
 
-		printf( '<div class="notice notice-success is-dismissible"><p><strong>%1$s</strong> %2$s</p></div>', esc_html__( 'O² Rocket:', 'o2-rocket' ), esc_html( $message ) );
+		return array(
+			'message'  => (string) $notice['message'],
+			'progress' => ! empty( $notice['progress'] ),
+		);
 	}
 
-	public static function add_notice( string $message ): void {
-		set_transient( self::NOTICE_PREFIX . get_current_user_id(), $message, MINUTE_IN_SECONDS );
+	// "x de y páginas" atualizado a cada 3 s pela consulta de andamento (que também adianta a fila).
+	private function get_progress_html(): string {
+		$progress = $this->preloader->get_progress();
+		$labels   = array(
+			/* translators: 1: concluídas, 2: total. */
+			'progress' => __( 'Pré-carregamento: %1$s de %2$s páginas.', 'o2-rocket' ),
+			/* translators: 1: concluídas, 2: total. */
+			'done'     => __( 'Pré-carregamento concluído: %1$s de %2$s páginas.', 'o2-rocket' ),
+			/* translators: %s: quantidade. */
+			'failed'   => __( '%s com falha.', 'o2-rocket' ),
+		);
+		$text     = sprintf( $labels['progress'], number_format_i18n( $progress['done'] ), number_format_i18n( $progress['total'] ) );
+		$script   = "(function(el){var t=el.getAttribute('data-labels');t=JSON.parse(t);var n=function(v){return Number(v).toLocaleString(document.documentElement.lang||'pt-BR');};"
+			. "var tick=function(){var b=new FormData();b.append('action',el.getAttribute('data-action'));b.append('_ajax_nonce',el.getAttribute('data-nonce'));"
+			. "fetch(el.getAttribute('data-url'),{method:'POST',credentials:'same-origin',body:b}).then(function(r){return r.json();}).then(function(j){if(!j||!j.success){return;}var p=j.data.progress;"
+			. "el.textContent=(j.data.running?t.progress:t.done).replace('%1\$s',n(p.done)).replace('%2\$s',n(p.total))+(p.failed>0?' '+t.failed.replace('%s',n(p.failed)):'');if(j.data.running){setTimeout(tick,3000);}}).catch(function(){});};setTimeout(tick,1500);})"
+			. "(document.currentScript.previousElementSibling);";
+
+		return sprintf(
+			'<span class="o2r-preload-progress" data-url="%1$s" data-action="%2$s" data-nonce="%3$s" data-labels="%4$s" aria-live="polite">%5$s</span><script>%6$s</script>',
+			esc_url( admin_url( 'admin-ajax.php' ) ),
+			esc_attr( Preloader::AJAX_ACTION ),
+			esc_attr( wp_create_nonce( Preloader::AJAX_ACTION ) ),
+			esc_attr( (string) wp_json_encode( $labels ) ),
+			esc_html( $text ),
+			$script
+		);
 	}
 
 	// URL limpa (sem query) da página do front-end que está sendo vista.

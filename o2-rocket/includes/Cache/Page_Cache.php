@@ -411,6 +411,7 @@ final class Page_Cache {
 		return $deleted;
 	}
 
+	// O 2º argumento da ação são as URLs que tinham página em cache (só quando alguém usa a lista: pré-carregamento).
 	public function purge_all(): bool {
 		$directory = $this->get_site_cache_dir();
 
@@ -422,13 +423,20 @@ final class Page_Cache {
 		$this->config = null;
 		$found        = array();
 		$deleted      = true;
+		$collect      = (bool) has_action( 'o2_rocket_after_purge_urls' );
 
 		if ( is_dir( $directory ) ) {
 			$protected = $this->get_protected_subdirectories();
-			$deleted   = empty( $protected ) ? $this->delete_tree( $directory, '', $found, false ) : $this->delete_tree_except( $directory, $protected );
+			$deleted   = empty( $protected ) ? $this->delete_tree( $directory, '', $found, $collect ) : $this->delete_tree_except( $directory, $protected, $found, $collect );
 		}
 
-		do_action( 'o2_rocket_after_purge_all', $deleted );
+		$urls = array();
+
+		foreach ( array_keys( $found ) as $relative ) {
+			$urls[] = $this->relative_dir_to_url( (string) $relative );
+		}
+
+		do_action( 'o2_rocket_after_purge_all', $deleted, array_values( array_unique( $urls ) ) );
 
 		return $deleted;
 	}
@@ -1216,9 +1224,8 @@ final class Page_Cache {
 		return direct_filesystem()->delete( $directory, true );
 	}
 
-	private function delete_tree_except( string $directory, array $protected ): bool {
+	private function delete_tree_except( string $directory, array $protected, array &$found, bool $collect ): bool {
 		$deleted = true;
-		$found   = array();
 
 		foreach ( (array) scandir( $directory ) as $name ) {
 			$name = (string) $name;
@@ -1230,9 +1237,13 @@ final class Page_Cache {
 			$path = $directory . $name;
 
 			if ( is_dir( $path ) ) {
-				$deleted = $this->delete_tree( trailingslashit( $path ), $name, $found, false ) && $deleted;
+				$deleted = $this->delete_tree( trailingslashit( $path ), $name, $found, $collect ) && $deleted;
 			} elseif ( Cache_Engine::is_cache_filename( $name ) ) {
 				$deleted = wp_delete_file_from_directory( $path, $directory ) && $deleted;
+
+				if ( '.html' === substr( $name, -5 ) ) {
+					$found[''] = true;
+				}
 			}
 		}
 
