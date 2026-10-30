@@ -117,7 +117,7 @@ Scripts em `$SCRATCHPAD/scripts/` (não versionados): `mksite.sh <nome> <porta> 
 - Renderização sob demanda: desligada por padrão; profundidade maior que a do WP Rocket (5 níveis, alcança o conteúdo dos temas de blocos) e verificações extras no beacon (qualquer descendente fixo/sticky, desenho fora do bloco, teste real de contenção) + altura medida em `contain-intrinsic-size` (o WP Rocket não define a altura e a barra de rolagem pula).
 - Cloudflare: só token de API (sem e-mail + chave global, que dá acesso à conta inteira). "Configurações ideais" automáticas e reescrita de protocolo não foram feitas (mudariam a configuração da zona do cliente; o SSL "Flexible" é desaconselhado).
 - Nenhum arquivo do plugin cita o nome do produto de origem: as listas adaptadas (parâmetros de marketing, exclusões do atraso de JS, blocos `<style>` dinâmicos) creditam a detentora dos direitos (WP Media) e a licença GPL-2.0-or-later nos comentários. O `COMPARATIVO.md` (fora do plugin) usa o nome porque é a comparação pedida.
-- Push para o GitHub falhou com 403 (o app do Claude não tem acesso de escrita ao repositório). Os commits ficam locais; tentar `git push -u origin claude/epic-hypatia-j4qzlg` de novo ao fim de cada fase.
+- Push: durante as fases o GitHub recusou com 403 (sem acesso do app do Claude); depois que o acesso foi liberado, a branch `claude/epic-hypatia-j4qzlg` foi enviada com todas as fases.
 
 ## Roadmap
 
