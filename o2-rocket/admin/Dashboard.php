@@ -5,9 +5,11 @@
 
 namespace O2Rocket\Admin;
 
+use O2Rocket\Cache\Cache_Controls;
 use O2Rocket\Cache\Cache_Engine;
 use O2Rocket\Cache\Drop_In_Manager;
 use O2Rocket\Cache\Page_Cache;
+use O2Rocket\Preload\Preloader;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -30,9 +32,12 @@ final class Dashboard {
 
 	private Drop_In_Manager $drop_in;
 
-	public function __construct( Page_Cache $page_cache, Drop_In_Manager $drop_in ) {
+	private Preloader $preloader;
+
+	public function __construct( Page_Cache $page_cache, Drop_In_Manager $drop_in, Preloader $preloader ) {
 		$this->page_cache = $page_cache;
 		$this->drop_in    = $drop_in;
+		$this->preloader  = $preloader;
 	}
 
 	public function register_hooks(): void {
@@ -55,7 +60,10 @@ final class Dashboard {
 				?>
 			</div>
 
-			<?php $this->render_kpis( $stats, $checks ); ?>
+			<?php
+			$this->render_kpis( $stats, $checks );
+			$this->render_quick_actions();
+			?>
 
 			<div class="o2r-grid o2r-grid--2">
 				<?php
@@ -672,6 +680,41 @@ final class Dashboard {
 				</div>
 			<?php endforeach; ?>
 		</div>
+		<?php
+	}
+
+	private function render_quick_actions(): void {
+		$preload  = $this->preloader->is_enabled();
+		$progress = $preload ? $this->preloader->get_progress() : array();
+		$running  = $preload && $this->preloader->has_work();
+		?>
+		<section class="o2r-card o2r-quick-actions">
+			<header class="o2r-card-header">
+				<h3 class="o2r-card-title"><?php esc_html_e( 'Ações rápidas', 'o2-rocket' ); ?></h3>
+				<p class="o2r-card-description"><?php esc_html_e( 'As mesmas da barra do admin.', 'o2-rocket' ); ?></p>
+			</header>
+			<div class="o2r-card-body">
+				<div class="o2r-actions">
+					<?php if ( $preload ) : ?>
+						<a class="o2r-button o2r-button--primary" href="<?php echo esc_url( Cache_Controls::get_action_url( 'purge_preload' ) ); ?>"><?php esc_html_e( 'Limpar e pré-carregar', 'o2-rocket' ); ?></a>
+					<?php endif; ?>
+					<a class="o2r-button" href="<?php echo esc_url( Cache_Controls::get_action_url( 'all' ) ); ?>"><?php esc_html_e( 'Limpar todo o cache', 'o2-rocket' ); ?></a>
+					<?php if ( $preload ) : ?>
+						<a class="o2r-button" href="<?php echo esc_url( Cache_Controls::get_action_url( 'preload' ) ); ?>"><?php esc_html_e( 'Pré-carregar o cache', 'o2-rocket' ); ?></a>
+					<?php endif; ?>
+					<span class="o2r-muted">
+						<?php
+						if ( $running ) {
+							/* translators: 1: concluídas, 2: total. */
+							echo esc_html( sprintf( __( 'Pré-carregando: %1$s de %2$s páginas.', 'o2-rocket' ), number_format_i18n( $progress['done'] ), number_format_i18n( $progress['total'] ) ) );
+						} elseif ( ! $preload ) {
+							esc_html_e( 'Ligue o pré-carregamento na aba Page Cache para gerar o cache logo depois de limpar.', 'o2-rocket' );
+						}
+						?>
+					</span>
+				</div>
+			</div>
+		</section>
 		<?php
 	}
 

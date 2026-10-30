@@ -174,6 +174,12 @@ final class Settings {
 			'sanitize_callback' => array( Page_Cache::class, 'sanitize_purge_urls' ),
 		);
 
+		$schema[ Preloader::SETTING_AFTER_PURGE ] = array(
+			'tab'     => self::TAB_PAGE_CACHE,
+			'type'    => 'bool',
+			'default' => true,
+		);
+
 		$schema[ Htaccess::SETTING_GZIP ] = array(
 			'tab'     => self::TAB_PAGE_CACHE,
 			'type'    => 'bool',
@@ -1589,7 +1595,22 @@ final class Settings {
 				'label_for'   => 'o2r-preload-enabled',
 				'key'         => Preloader::SETTING_ENABLED,
 				'label'       => __( 'Gerar o cache de todas as páginas do sitemap antes da primeira visita', 'o2-rocket' ),
-				'description' => __( 'Usa o sitemap do WordPress, do Yoast, do Rank Math, do SEOPress, do All in One SEO ou do The SEO Framework (sem sitemap, lista os conteúdos publicados). Uma página por vez, em lotes a cada minuto pelo WP-Cron. Páginas limpas ou vencidas voltam para a fila.', 'o2-rocket' ),
+				'description' => __( 'Usa o sitemap do WordPress, do Yoast, do Rank Math, do SEOPress, do All in One SEO ou do The SEO Framework (sem sitemap, lista os conteúdos publicados). Uma página por vez: começa na hora e continua em lotes a cada minuto pelo WP-Cron.', 'o2-rocket' ),
+			)
+		);
+
+		add_settings_field(
+			Preloader::SETTING_AFTER_PURGE,
+			__( 'Pré-carregar depois de limpar', 'o2-rocket' ),
+			array( $this, 'render_toggle' ),
+			$page,
+			'o2r_preload',
+			array(
+				'label_for'   => 'o2r-preload-after-purge',
+				'key'         => Preloader::SETTING_AFTER_PURGE,
+				'requires'    => 'o2r-preload-enabled',
+				'label'       => __( 'Pré-carregar automaticamente depois de limpar', 'o2-rocket' ),
+				'description' => __( 'Toda limpeza (manual, ao salvar um post, página ou produto, ao trocar opções, ao aplicar um perfil ou por expiração) devolve as páginas limpas para a frente da fila: a home primeiro, depois o menu principal e as páginas que acabaram de ser limpas. Só funciona com o pré-carregamento ligado.', 'o2-rocket' ),
 			)
 		);
 
@@ -1857,7 +1878,11 @@ final class Settings {
 			<?php endforeach; ?>
 		</div>
 
-		<?php if ( '' !== $status['error'] ) : ?>
+		<?php
+		// O erro guardado só vale enquanto o problema existir de fato.
+		$broken = Drop_In_Manager::STATE_OK !== $status['dropin'] || ! $status['wp_cache'] || ! $status['config'];
+		?>
+		<?php if ( '' !== $status['error'] && $broken ) : ?>
 			<div class="o2r-notice o2r-notice--warning" role="alert">
 				<div class="o2r-notice-message">
 					<p>
@@ -1876,6 +1901,9 @@ final class Settings {
 
 		<div class="o2r-actions">
 			<a class="o2r-button" href="<?php echo esc_url( Cache_Controls::get_action_url( 'all' ) ); ?>"><?php esc_html_e( 'Limpar todo o cache', 'o2-rocket' ); ?></a>
+			<?php if ( $this->preloader->is_enabled() ) : ?>
+				<a class="o2r-button" href="<?php echo esc_url( Cache_Controls::get_action_url( 'purge_preload' ) ); ?>"><?php esc_html_e( 'Limpar e pré-carregar', 'o2-rocket' ); ?></a>
+			<?php endif; ?>
 			<span class="o2r-muted"><?php esc_html_e( 'Também disponível na barra do admin, em qualquer página do site.', 'o2-rocket' ); ?></span>
 		</div>
 		<?php
@@ -1893,9 +1921,9 @@ final class Settings {
 
 		$status  = $this->preloader->get_status();
 		$counts  = $status['counts'];
-		$total   = max( 0, (int) $status['total'] );
-		$done    = (int) $counts['completed'] + (int) $counts['failed'];
-		$percent = $total > 0 ? min( 100, round( $done * 100 / $total, 1 ) ) : 0;
+		$total   = max( 0, (int) $status['progress']['total'] );
+		$done    = (int) $status['progress']['done'];
+		$percent = $total > 0 ? min( 100, round( $done * 100 / $total, 1 ) ) : 100;
 		?>
 		<div
 			class="o2r-preload"
@@ -1904,7 +1932,7 @@ final class Settings {
 			data-action="<?php echo esc_attr( Preloader::AJAX_ACTION ); ?>"
 			data-nonce="<?php echo esc_attr( wp_create_nonce( Preloader::AJAX_ACTION ) ); ?>"
 			data-running="<?php echo esc_attr( $status['running'] ? '1' : '0' ); ?>"
-			data-label-progress="<?php /* translators: 1: concluídas, 2: total. */ esc_attr_e( '%1$s de %2$s URLs processadas', 'o2-rocket' ); ?>"
+			data-label-progress="<?php /* translators: 1: concluídas, 2: total. */ esc_attr_e( 'Pré-carregando: %1$s de %2$s páginas.', 'o2-rocket' ); ?>"
 			data-label-done="<?php esc_attr_e( 'Pré-carregamento concluído.', 'o2-rocket' ); ?>"
 			data-label-error="<?php esc_attr_e( 'Não foi possível consultar o andamento.', 'o2-rocket' ); ?>"
 		>
@@ -1932,6 +1960,11 @@ final class Settings {
 			</div>
 			<p class="o2r-card-foot" data-o2r-preload-status>
 				<?php
+				if ( $status['running'] ) {
+					/* translators: 1: concluídas, 2: total. */
+					echo esc_html( sprintf( __( 'Pré-carregando: %1$s de %2$s páginas.', 'o2-rocket' ), number_format_i18n( $done ), number_format_i18n( $total ) ) ) . ' ';
+				}
+
 				if ( $status['last_run'] > 0 ) {
 					/* translators: %s: tempo decorrido. */
 					echo esc_html( sprintf( __( 'Última execução há %s.', 'o2-rocket' ), human_time_diff( (int) $status['last_run'] ) ) );
@@ -1948,6 +1981,7 @@ final class Settings {
 				<p class="o2r-muted"><?php esc_html_e( 'DISABLE_WP_CRON está ativo: o pré-carregamento só anda se houver um cron real chamando wp-cron.php (ou com esta tela aberta).', 'o2-rocket' ); ?></p>
 			<?php endif; ?>
 			<div class="o2r-actions">
+				<a class="o2r-button o2r-button--primary" href="<?php echo esc_url( Cache_Controls::get_action_url( 'purge_preload' ) ); ?>"><?php esc_html_e( 'Limpar e pré-carregar', 'o2-rocket' ); ?></a>
 				<a class="o2r-button" href="<?php echo esc_url( Cache_Controls::get_action_url( 'preload' ) ); ?>"><?php esc_html_e( 'Pré-carregar tudo agora', 'o2-rocket' ); ?></a>
 				<span class="o2r-muted"><?php esc_html_e( 'Com esta tela aberta, a fila também avança sem depender de visitas.', 'o2-rocket' ); ?></span>
 			</div>

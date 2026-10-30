@@ -8,15 +8,18 @@ namespace O2Rocket\Preload;
 defined( 'ABSPATH' ) || exit;
 
 // Fila do pré-carregamento numa tabela própria por site: aguenta dezenas de milhares de URLs sem inchar wp_options.
+// Menor prioridade sai primeiro (0 = home e a página pedida).
 final class Preload_Queue {
 
-	const DB_VERSION        = '1';
+	const DB_VERSION        = '2';
 	const DB_VERSION_OPTION = 'o2_rocket_preload_db_version';
 
 	const STATUS_PENDING   = 'pending';
 	const STATUS_RUNNING   = 'in-progress';
 	const STATUS_COMPLETED = 'completed';
 	const STATUS_FAILED    = 'failed';
+
+	const PRIORITY_NORMAL = 5;
 
 	const INSERT_CHUNK = 100;
 
@@ -46,10 +49,12 @@ final class Preload_Queue {
 				url_hash char(32) NOT NULL default '',
 				status varchar(20) NOT NULL default 'pending',
 				attempts tinyint(3) unsigned NOT NULL default 0,
+				priority tinyint(3) unsigned NOT NULL default 5,
 				modified datetime NOT NULL default '0000-00-00 00:00:00',
 				PRIMARY KEY  (id),
 				UNIQUE KEY url_hash (url_hash),
-				KEY status_modified (status,modified)
+				KEY status_modified (status,modified),
+				KEY status_priority (status,priority)
 			) {$collate};"
 		);
 
@@ -75,17 +80,19 @@ final class Preload_Queue {
 	}
 
 	// Insere as novas e devolve as existentes ao status pedido (sem duplicar).
-	public function add( array $urls, string $status = self::STATUS_PENDING ): int {
+	// Pendente que já esperava fica no mesmo lugar e com a melhor das duas prioridades.
+	public function add( array $urls, string $status = self::STATUS_PENDING, int $priority = self::PRIORITY_NORMAL ): int {
 		global $wpdb;
 
 		if ( ! $this->is_installed() ) {
 			return 0;
 		}
 
-		$table = self::table();
-		$now   = current_time( 'mysql', true );
-		$added = 0;
-		$map   = array();
+		$table    = self::table();
+		$now      = current_time( 'mysql', true );
+		$priority = max( 0, min( 255, $priority ) );
+		$added    = 0;
+		$map      = array();
 
 		foreach ( $urls as $url ) {
 			if ( is_string( $url ) && '' !== $url && strlen( $url ) <= 2000 ) {
@@ -105,9 +112,17 @@ final class Preload_Queue {
 				$update       = array_keys( $existing );
 				$placeholders = implode( ', ', array_fill( 0, count( $update ), '%s' ) );
 
-				// Linha em andamento não volta para a fila: a requisição dela já está a caminho.
-				// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare
-				$wpdb->query( $wpdb->prepare( "UPDATE {$table} SET status = %s, attempts = 0, modified = %s WHERE status <> %s AND url_hash IN ({$placeholders})", array_merge( array( $status, $now, self::STATUS_RUNNING ), $update ) ) );
+				// Linha em andamento também volta: a página pode ter sido limpa depois da visita (finish() não a marca como
+				// concluída). O status vai por último: no MySQL as atribuições seguintes já enxergariam o valor novo.
+				if ( self::STATUS_PENDING === $status ) {
+					// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare
+					$wpdb->query( $wpdb->prepare( "UPDATE {$table} SET priority = CASE WHEN status = %s AND priority < %d THEN priority ELSE %d END, modified = CASE WHEN status = %s THEN modified ELSE %s END, attempts = CASE WHEN status = %s THEN attempts ELSE 0 END, status = %s WHERE url_hash IN ({$placeholders})", array_merge( array( self::STATUS_PENDING, $priority, $priority, self::STATUS_PENDING, $now, self::STATUS_PENDING, self::STATUS_PENDING ), $update ) ) );
+				} else {
+					// Em andamento continua com quem a visita; já concluída fica com a data antiga (o progresso do lote
+					// atual conta só o que mudou nele).
+					// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare
+					$wpdb->query( $wpdb->prepare( "UPDATE {$table} SET attempts = 0, modified = %s, status = %s WHERE status <> %s AND status <> %s AND url_hash IN ({$placeholders})", array_merge( array( $now, $status, self::STATUS_RUNNING, $status ), $update ) ) );
+				}
 			}
 
 			foreach ( $chunk as $hash => $url ) {
@@ -123,9 +138,10 @@ final class Preload_Queue {
 						'url_hash' => $hash,
 						'status'   => $status,
 						'attempts' => 0,
+						'priority' => $priority,
 						'modified' => $now,
 					),
-					array( '%s', '%s', '%s', '%d', '%s' )
+					array( '%s', '%s', '%s', '%d', '%d', '%s' )
 				);
 
 				$added += $inserted ? 1 : 0;
@@ -135,7 +151,8 @@ final class Preload_Queue {
 		return $added;
 	}
 
-	public function get_by_status( string $status, int $limit ): array {
+	// Na ordem da fila: prioridade e depois chegada. $max_priority limita às urgentes.
+	public function get_by_status( string $status, int $limit, int $max_priority = 255 ): array {
 		global $wpdb;
 
 		if ( ! $this->is_installed() ) {
@@ -145,7 +162,7 @@ final class Preload_Queue {
 		$table = self::table();
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-		return (array) $wpdb->get_results( $wpdb->prepare( "SELECT id, url, attempts FROM {$table} WHERE status = %s ORDER BY modified ASC, id ASC LIMIT %d", $status, max( 1, $limit ) ) );
+		return (array) $wpdb->get_results( $wpdb->prepare( "SELECT id, url, attempts, priority FROM {$table} WHERE status = %s AND priority <= %d ORDER BY priority ASC, modified ASC, id ASC LIMIT %d", $status, $max_priority, max( 1, $limit ) ) );
 	}
 
 	// Linhas "em andamento" há mais de N segundos (requisição que não voltou).
@@ -181,6 +198,16 @@ final class Preload_Queue {
 		$wpdb->update( self::table(), $data, array( 'id' => $id ), $format, array( '%d' ) );
 	}
 
+	// Fim do processamento: só vale se ninguém devolveu a linha para a fila enquanto a página era visitada.
+	public function finish( int $id, string $status, int $attempts ): void {
+		global $wpdb;
+
+		$table = self::table();
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$wpdb->query( $wpdb->prepare( "UPDATE {$table} SET attempts = %d, modified = %s, status = %s WHERE id = %d AND status = %s", max( 0, min( 255, $attempts ) ), current_time( 'mysql', true ), $status, $id, self::STATUS_RUNNING ) );
+	}
+
 	public function set_status_by_url( string $url, string $status ): void {
 		global $wpdb;
 
@@ -209,7 +236,7 @@ final class Preload_Queue {
 		$wpdb->delete( self::table(), array( 'id' => $id ), array( '%d' ) );
 	}
 
-	// Recomeço completo: tudo que não está em andamento volta a pendente.
+	// Recomeço completo: tudo volta a pendente (inclusive a que está sendo visitada, ver finish()).
 	public function reset_all(): void {
 		global $wpdb;
 
@@ -220,7 +247,7 @@ final class Preload_Queue {
 		$table = self::table();
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-		$wpdb->query( $wpdb->prepare( "UPDATE {$table} SET status = %s, attempts = 0, modified = %s WHERE status <> %s", self::STATUS_PENDING, current_time( 'mysql', true ), self::STATUS_RUNNING ) );
+		$wpdb->query( $wpdb->prepare( "UPDATE {$table} SET status = %s, attempts = 0, priority = %d, modified = %s", self::STATUS_PENDING, self::PRIORITY_NORMAL, current_time( 'mysql', true ) ) );
 	}
 
 	public function clear(): void {
@@ -237,6 +264,15 @@ final class Preload_Queue {
 	}
 
 	public function count_by_status(): array {
+		return $this->count( '' );
+	}
+
+	// Andamento do lote atual: o que ainda espera mais o que foi concluído (ou falhou) desde $since (GMT).
+	public function count_since( string $since ): array {
+		return $this->count( $since );
+	}
+
+	private function count( string $since ): array {
 		global $wpdb;
 
 		$counts = array(
@@ -251,9 +287,10 @@ final class Preload_Queue {
 		}
 
 		$table = self::table();
+		$where = '' === $since ? '' : $wpdb->prepare( ' WHERE status = %s OR status = %s OR modified >= %s', self::STATUS_PENDING, self::STATUS_RUNNING, $since );
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-		foreach ( (array) $wpdb->get_results( "SELECT status, COUNT(*) AS total FROM {$table} GROUP BY status" ) as $row ) {
+		foreach ( (array) $wpdb->get_results( "SELECT status, COUNT(*) AS total FROM {$table}{$where} GROUP BY status" ) as $row ) {
 			if ( isset( $counts[ $row->status ] ) ) {
 				$counts[ $row->status ] = (int) $row->total;
 			}
@@ -264,5 +301,9 @@ final class Preload_Queue {
 
 	public function has_pending(): bool {
 		return ! empty( $this->get_by_status( self::STATUS_PENDING, 1 ) );
+	}
+
+	public function has_running(): bool {
+		return ! empty( $this->get_by_status( self::STATUS_RUNNING, 1 ) );
 	}
 }

@@ -36,7 +36,10 @@
 - **Pré-carregamento** (`includes/Preload/`)
   - `Preload_Queue` — tabela `{prefix}o2_rocket_preload` por site (url, url_hash único, status, attempts, modified).
   - `Sitemap_Parser` — detecta sitemaps (Yoast, Rank Math, SEOPress, AIOSEO, The SEO Framework, núcleo) e lê XML por regex (sem SimpleXML).
-  - `Preloader` — cron `o2_rocket_preload` a cada minuto enquanto houver fila; 20 s por execução, uma requisição bloqueante por vez (sem rajadas), trava por transient; sem sitemap usa posts/termos do banco; aprende URLs visitadas; a tela do painel adianta a fila via AJAX.
+  - `Preloader` — cron `o2_rocket_preload` a cada minuto enquanto houver fila; 20 s por execução, uma requisição bloqueante por vez (sem rajadas), trava atômica (`INSERT IGNORE` da opção `o2_rocket_preload_lock`); sem sitemap usa posts/termos do banco; aprende URLs visitadas; a tela do painel adianta a fila via AJAX.
+  - Fila com prioridade (coluna `priority`, DB v2; menor sai primeiro): 0 home e página pedida, 1 menu principal (`MENU_LOCATIONS`, senão o primeiro menu; tema de blocos: navegação do cabeçalho, resolvendo `core/pattern`; filtro `o2_rocket_preload_priority_urls`), 2 recém-limpas, 5 resto. Urgente que chega passa na frente no meio do lote. Limpeza com a linha em andamento a devolve à fila (`Preload_Queue::finish()` só conclui se ainda estiver em andamento).
+  - Início imediato: `kick()` no `shutdown` → POST não bloqueante para `admin-ajax.php?action=o2_rocket_preload_kick` com chave de uso único (transient com `wp_hash`) + `spawn_cron()`; cURL limitado a 0,5 s (`http_api_curl`). Execução já viva grava `o2_rocket_preload_rekick` e dispara outra ao terminar. Telas do painel (admin) adiantam 6 s em segundo plano, no máximo 1×/min.
+  - `preload_after_purge` (ligada): `o2_rocket_after_purge_all` (2º argumento = URLs que estavam em cache) e `after_purge_urls`/`after_purge_expired` devolvem as URLs à fila; desligada, só as ações "Limpar e pré-carregar"/"Pré-carregar" enfileiram. Progresso do lote (`get_progress()`: concluídas desde `state.batch` + pendentes). `get_stall()`: fila pendente e sem WP-Cron há 10 min → aviso com o comando do cPanel e `DISABLE_WP_CRON` (`Cache_Controls::render_cron_alert`).
   - `Link_Prefetch` + `assets/js/prefetch.js` — speculation rules do núcleo (WP 6.8+) em `prefetch`/`moderate` com exclusões; fallback em JS.
 - `includes/Server/Htaccess.php` — bloco `# BEGIN O2 Rocket` no topo do .htaccess (Brotli preferido via `SetEnvIfNoCase ... no-gzip`, GZIP, mod_expires, mod_headers). Só Apache/LiteSpeed, só o site principal no multisite; erro de escrita vira aviso com o bloco para copiar; Nginx recebe trecho equivalente no painel (com CORS nas fontes). Outros módulos acrescentam regras pelo filtro `o2_rocket_htaccess_rules` (CDN: CORS das fontes; `Cache_Rewrite`: entrega do cache).
 - `includes/Server/Cache_Rewrite.php` — opção `server_serve_cache` (desligada): regras de mod_rewrite que entregam `index[-https].html[.gz]` direto pelo Apache/LiteSpeed. Só site único; GET/HEAD sem query string, cookies/UA de exclusão, host literal, caracteres seguros, regra da barra final, celular fica com o drop-in quando há cache separado. 2ª passada (arquivo dentro de `pages/`) põe `Content-Encoding`, `Cache-Control`, `X-O2-Rocket-Cache: HIT (servidor)`, `Vary` e `no-gzip`/`no-brotli`. `%1` = caminho sem barra final. Reescreve o .htaccess quando os permalinks mudam.
@@ -77,7 +80,14 @@
 - `Cache\Cache_Controls` também tem "Limpar o OPcache" na barra do admin (só `manage_options`, se o OPcache estiver ligado).
 - `admin/Post_Options.php` — caixa "O² Rocket" no editor (tipos públicos): "Nunca fazer cache desta página" e desligar só nela todas as otimizações ou cada uma (`minify`, `css_delivery`, `defer_js`, `delay_js`, `lazyload`, `lcp`, `lazy_render`, `cdn`). Meta `_o2_rocket_exclude`; `Html_Pipeline::get_post_exclusions()` (depois do `wp`) remove as etapas de `Html_Pipeline::FEATURES` com `remove_all_filters`; `Page_Cache::is_cacheable_request()` respeita `cache`. Salvar limpa só a URL do post.
 - Troca de endereço: `Page_Cache::maybe_handle_domain_change()` (admin_init 5) compara `home_url('/')` com a opção `o2_rocket_last_home`; se mudou, apaga o diretório de cache (site único) e a configuração do drop-in do endereço antigo, refaz o drop-in, limpa tudo e avisa.
-- `admin/Dashboard.php`, `admin/Media_Dashboard.php` — painéis.
+- `admin/Dashboard.php`, `admin/Media_Dashboard.php` — painéis (o Dashboard tem "Ações rápidas").
+- `admin/Brand.php` — logo/ícone/OxigenWeb em SVG em linha (`fill="currentColor"`); `menu_icon()` = data URI base64 com viewBox quadrado e `fill="black"` (o svg-painter recolore). Ícone na barra do admin com CSS em `wp_add_inline_style('admin-bar')`.
+- `admin/Profiles.php` — perfis Seguro/Equilibrado/Turbo no topo do Dashboard (`admin-post` `o2_rocket_apply_profile`/`o2_rocket_undo_profile`, backup em `o2_rocket_settings_backup`, sem autoload). Só mexem nas chaves de `settings` de cada perfil; exclusões, CDN, integrações, banco, Heartbeat por local, tempo de vida, cache de celular e `server_serve_cache` ficam como estão.
+- `Cache_Controls` — escopos `purge_preload`, `purge_preload_url`, `purge_preload_post` ("Limpar e pré-carregar"), `repair` ("Corrigir agora" do alerta vermelho `render_health_alert`, ligado em `o2_rocket_admin_alerts`). Aviso guarda `{message, progress}`; com progresso mostra "x de y" atualizado por JS em linha; no site aparece num canto da tela (`wp_footer`).
+- `o2-rocket.php` — `get_required_files()` lista os PHP obrigatórios: faltando algum, o plugin não carrega e avisa "Instalação incompleta". **Arquivo PHP novo precisa entrar nessa lista.**
+- `Lazy_Load` — imagens dentro de blocos escondidos no celular (`MOBILE_HIDDEN_CLASSES`, `d-none`...) não recebem `fetchpriority=high`/`loading=eager` quando a página serve celular (`data-o2r-mobile-hidden`).
+- `Delay_Js` — `<style id="o2r-delay-fallback">` mostra o 1º slide de Swiper/Slick/Owl e os blocos do AOS até o JS rodar; `assets/js/aos-visible.js` marca os blocos AOS visíveis com `aos-animate`. Filtro `o2_rocket_delay_js_fallback_css`.
+- `Drop_In_Manager::has_no_code()` — `advanced-cache.php` vazio (só `<?php`/comentários) conta como ausente e é substituído; `Page_Cache::get_health()` dá o estado ao vivo, e salvar a aba Page Cache sem mudanças também tenta reinstalar.
 
 ## Ambiente de teste (sessão do Claude)
 
@@ -118,6 +128,12 @@ Scripts em `$SCRATCHPAD/scripts/` (não versionados): `mksite.sh <nome> <porta> 
 - Cloudflare: só token de API (sem e-mail + chave global, que dá acesso à conta inteira). "Configurações ideais" automáticas e reescrita de protocolo não foram feitas (mudariam a configuração da zona do cliente; o SSL "Flexible" é desaconselhado).
 - Nenhum arquivo do plugin cita o nome do produto de origem: as listas adaptadas (parâmetros de marketing, exclusões do atraso de JS, blocos `<style>` dinâmicos) creditam a detentora dos direitos (WP Media) e a licença GPL-2.0-or-later nos comentários. O `COMPARATIVO.md` (fora do plugin) usa o nome porque é a comparação pedida.
 - Push: durante as fases o GitHub recusou com 403 (sem acesso do app do Claude); depois que o acesso foi liberado, a branch `claude/epic-hypatia-j4qzlg` foi enviada com todas as fases.
+
+- Versão 1.1.0: a branch `marca-svg` trouxe os SVGs; o trabalho foi feito em `claude/epic-hypatia-j4qzlg` recriada a partir dela (o PR anterior já estava mesclado).
+- Perfis: rótulos curtos de ganho (Moderado/Alto/Máximo) para não cortar no card; aplicar o mesmo perfil de novo limpa o cache mesmo sem mudança; o aviso com "Desfazer" fica 15 min.
+- Atraso de JS: regras com `:not(#o2r-delay-fallback)` + `!important` para vencer o CSS do tema; regra extra com `:has(.swiper-slide-active)` evita piscar no instante em que o Swiper inicia; AOS acima da dobra já marcado como animado (sem animação de entrada, mas sem tela em branco).
+- Limpar e pré-carregar: requisição de início com chave de uso único (sem cookie de sessão, o nonce não serviria); o WP 6.9+ já chama o WP-Cron no `shutdown` (até 1 s de espera, comportamento do núcleo); o lote pequeno do painel não chama `spawn_cron` (o núcleo já chama); sem encadear execuções sem fim (só um novo início pedido durante a execução).
+- O aviso de WP-Cron parado usa a última execução pelo cron (não as do painel), senão o administrador navegando esconderia o problema.
 
 ## Roadmap
 
@@ -171,6 +187,13 @@ Fase 5 — CSS não utilizado e CSS crítico gerados no próprio servidor; CDN; 
   - [x] Limpar OPcache na barra do admin; correção: a comparação "minificado é menor?" agora acontece antes de WebP/CDN alongarem as URLs (CSS pequeno deixava de ser minificado).
   - [x] Opções por post no editor (nunca fazer cache + desligar otimizações só na página) e limpeza automática após troca de endereço do site.
   - [x] `COMPARATIVO.md`.
+
+- [x] **Versão 1.1.0** (concluída)
+  - [x] Ícone em SVG no menu (testado em 3 esquemas de cores e hover) e na barra do admin; cabeçalho com logo SVG, versão discreta e crédito OxigenWeb.
+  - [x] Perfis de otimização com "Em uso", "Configuração atual" e Desfazer (testado: opções, CDN/token preservados, limpeza e pré-carregamento).
+  - [x] Instalação incompleta não derruba o site; `advanced-cache.php` vazio, alerta vermelho com "Corrigir agora"; imagens escondidas no celular sem prioridade.
+  - [x] Atraso de JS sem tela em branco (Chromium: slide/AOS visíveis antes da interação, sem piscar quando o JS assume).
+  - [x] Limpar e pré-carregar (64 URLs: home em cache em ~0,5 s, ordem home → menu → limpas → resto, chave errada = 403, início só pelo admin-ajax com o cron bloqueado). A pedido do usuário, os testes gerais finais (perfis no Apache, capturas, retomada após interrupção) não foram refeitos nesta versão.
 
 Limitações conhecidas: cache para usuários logados (ver Decisões); WPML/Polylang com um domínio por idioma só têm cache no domínio principal (a configuração do drop-in é por host); combinar CSS/JS e AVIF não feitos de propósito.
 

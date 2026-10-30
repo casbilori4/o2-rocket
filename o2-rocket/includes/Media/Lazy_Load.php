@@ -5,6 +5,8 @@
 
 namespace O2Rocket\Media;
 
+use O2Rocket\Cache\Cache_Engine;
+use O2Rocket\Cache\Page_Cache;
 use O2Rocket\Optimization\Html_Pipeline;
 use O2Rocket\Optimization\Html_Tag;
 
@@ -42,6 +44,12 @@ final class Lazy_Load {
 	// Atributos que indicam exclusão explícita ou outro lazy load já aplicado.
 	const SKIP_ATTRIBUTES = array( 'data-no-lazy', 'data-skip-lazy', 'data-src', 'data-lazy-src', 'data-o2r-src', 'srcdoc' );
 
+	// Classes que escondem o elemento em telas pequenas (Bootstrap 2-5, Foundation, Elementor, Avada, WPBakery, temas).
+	const MOBILE_HIDDEN_CLASSES = array( 'hidden-xs', 'hidden-phone', 'visible-desktop', 'visible-md', 'visible-lg', 'show-for-medium', 'show-for-large', 'hide-for-small-only', 'elementor-hidden-mobile', 'elementor-hidden-phone', 'fusion-no-small-visibility', 'vc_hidden-xs', 'hidden-mobile', 'hide-mobile', 'hide-on-mobile', 'mobile-hide', 'mobile-hidden', 'desktop-only', 'only-desktop' );
+
+	// Marca das imagens que não ganham prioridade no celular (a etapa de LCP respeita).
+	const MOBILE_HIDDEN_ATTRIBUTE = 'data-o2r-mobile-hidden';
+
 	const YOUTUBE_PATTERN = '#^(?:https?:)?//(?:www\.)?(?:youtube(?:-nocookie)?\.com/embed/|youtu\.be/)([A-Za-z0-9_-]{11})(?:[?&\#]|$)#i';
 
 	private ?array $settings = null;
@@ -57,6 +65,11 @@ final class Lazy_Load {
 	private ?array $eager_urls = null;
 
 	private bool $eager_loaded = false;
+
+	// Trechos [início, fim] do HTML dentro de elementos escondidos no celular, e se o elemento atual está num deles.
+	private array $hidden_ranges = array();
+
+	private bool $in_hidden = false;
 
 	public function register_hooks(): void {
 		if ( is_admin() || ! $this->is_active() ) {
@@ -157,15 +170,24 @@ final class Lazy_Load {
 		$youtube    = $this->is_enabled( self::SETTING_YOUTUBE );
 		$background = $this->is_enabled( self::SETTING_CSS_BG );
 
+		$this->hidden_ranges = $images && self::serves_mobile() ? self::find_mobile_hidden_ranges( $html ) : array();
+
 		$result = preg_replace_callback(
 			self::TAG_PATTERN,
 			function ( array $matches ) use ( $images, $iframes, $youtube, $background ) {
+				$offset = (int) $matches[0][1];
+
+				foreach ( $matches as $key => $match ) {
+					$matches[ $key ] = $match[0];
+				}
+
 				// Grupos finais sem correspondência não vêm no array (alternativa de fundos não tem grupos).
 				if ( isset( $matches[1] ) && '' !== $matches[1] ) {
 					return $matches[0];
 				}
 
-				$element = $matches[0];
+				$element         = $matches[0];
+				$this->in_hidden = $this->is_in_hidden_range( $offset );
 
 				if ( 0 === stripos( $element, '<picture' ) ) {
 					return $images ? $this->lazyload_picture( $element ) : $element;
@@ -182,7 +204,10 @@ final class Lazy_Load {
 
 				return $background ? $this->lazyload_background( $element ) : $element;
 			},
-			$html
+			$html,
+			-1,
+			$count,
+			PREG_OFFSET_CAPTURE
 		);
 
 		return is_string( $result ) ? $result : $html;
@@ -196,11 +221,126 @@ final class Lazy_Load {
 			return $tag;
 		}
 
+		// Escondida no celular: não ocupa vaga de imagem imediata nem fica com prioridade alta.
+		if ( $this->in_hidden || ( self::serves_mobile() && self::has_mobile_hidden_class( (string) Html_Tag::get_attribute( $tag, 'class' ) ) ) ) {
+			if ( $this->is_eager( $tag, PHP_INT_MAX ) || $this->is_priority( $tag ) ) {
+				return self::demote( $tag );
+			}
+
+			return $this->should_skip( $tag, 'img' ) ? $tag : $this->make_lazy( $tag, $noscript );
+		}
+
 		++$this->images_seen;
 
 		if ( $this->is_eager( $tag, $this->images_seen ) || $this->should_skip( $tag, 'img' ) ) {
 			return $tag;
 		}
+
+		return $this->make_lazy( $tag, $noscript );
+	}
+
+	// Página que também vai para celulares (sem cache separado, ou a versão para celular dele).
+	public static function serves_mobile(): bool {
+		$stored = get_option( O2_ROCKET_OPTION, array() );
+
+		if ( ! is_array( $stored ) || empty( $stored[ Page_Cache::SETTING_MOBILE ] ) ) {
+			return true;
+		}
+
+		return Cache_Engine::is_mobile( wp_unslash( $_SERVER ) ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+	}
+
+	public static function has_mobile_hidden_class( string $class ): bool {
+		$classes = preg_split( '/\s+/', strtolower( trim( $class ) ), -1, PREG_SPLIT_NO_EMPTY );
+
+		if ( empty( $classes ) ) {
+			return false;
+		}
+
+		if ( array_intersect( $classes, (array) apply_filters( 'o2_rocket_mobile_hidden_classes', self::MOBILE_HIDDEN_CLASSES ) ) ) {
+			return true;
+		}
+
+		// Bootstrap 4/5: d-none (com ou sem d-sm-block...). Tailwind: hidden + sm:block, md:flex...
+		return in_array( 'd-none', $classes, true )
+			|| ( in_array( 'hidden', $classes, true ) && array() !== preg_grep( '/^(?:sm|md|lg|xl|2xl):(?:block|inline|inline-block|flex|inline-flex|grid|table)$/', $classes ) );
+	}
+
+	// Imagem escondida no celular: lazy nativo (o navegador não baixa enquanto display:none) e sem fetchpriority=high.
+	public static function demote( string $tag ): string {
+		// Todas as cópias: há temas (e versões do núcleo) que escrevem o atributo duas vezes.
+		for ( $i = 0; $i < 5 && Html_Tag::has_attribute( $tag, 'fetchpriority' ); $i++ ) {
+			$tag = Html_Tag::remove_attribute( $tag, 'fetchpriority' );
+		}
+
+		for ( $i = 0; $i < 5 && Html_Tag::has_attribute( $tag, 'loading' ); $i++ ) {
+			$tag = Html_Tag::remove_attribute( $tag, 'loading' );
+		}
+
+		$tag = Html_Tag::set_attribute( $tag, 'loading', 'lazy' );
+
+		return Html_Tag::set_attribute( $tag, self::MOBILE_HIDDEN_ATTRIBUTE, '1' );
+	}
+
+	// Elementos com classe de "escondido no celular": do início da tag de abertura até a de fechamento correspondente.
+	private static function find_mobile_hidden_ranges( string $html ): array {
+		$ranges = array();
+
+		if ( ! preg_match_all( '#<([a-z][a-z0-9-]*)\b[^>]*?\sclass\s*=\s*(["\'])([^"\']*)\2[^>]*>#i', $html, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE ) ) {
+			return $ranges;
+		}
+
+		foreach ( $matches as $match ) {
+			$name = strtolower( $match[1][0] );
+
+			if ( 'img' === $name || 'source' === $name || ! self::has_mobile_hidden_class( $match[3][0] ) || count( $ranges ) >= 200 ) {
+				continue;
+			}
+
+			$start = (int) $match[0][1];
+			$end   = self::find_closing_tag( $html, $name, $start + strlen( $match[0][0] ) );
+
+			if ( null !== $end ) {
+				$ranges[] = array( $start, $end );
+			}
+		}
+
+		return $ranges;
+	}
+
+	private static function find_closing_tag( string $html, string $name, int $from ): ?int {
+		if ( ! preg_match_all( '#<(/?)' . preg_quote( $name, '#' ) . '\b[^>]*>#i', $html, $tags, PREG_SET_ORDER | PREG_OFFSET_CAPTURE, $from ) ) {
+			return null;
+		}
+
+		$depth = 1;
+
+		foreach ( $tags as $tag ) {
+			$depth += '/' === $tag[1][0] ? -1 : ( '/>' === substr( $tag[0][0], -2 ) ? 0 : 1 );
+
+			if ( 0 === $depth ) {
+				return (int) $tag[0][1];
+			}
+		}
+
+		return null;
+	}
+
+	private function is_in_hidden_range( int $offset ): bool {
+		foreach ( $this->hidden_ranges as $range ) {
+			if ( $offset > $range[0] && $offset < $range[1] ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private function is_priority( string $tag ): bool {
+		return 'eager' === strtolower( trim( (string) Html_Tag::get_attribute( $tag, 'loading' ) ) ) || 'high' === strtolower( trim( (string) Html_Tag::get_attribute( $tag, 'fetchpriority' ) ) );
+	}
+
+	private function make_lazy( string $tag, bool $noscript ): string {
 
 		$lazy = Html_Tag::rename_attribute( $tag, 'src', 'data-src' );
 

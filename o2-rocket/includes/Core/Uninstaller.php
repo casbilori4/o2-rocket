@@ -33,6 +33,8 @@ final class Uninstaller {
 		'o2_rocket_cloudflare_queue',
 		'o2_rocket_lcp_db_version',
 		'o2_rocket_last_home',
+		'o2_rocket_settings_backup',
+		'o2_rocket_preload_lock',
 	);
 
 	// Metadados gravados nos anexos pela otimização de imagens (os arquivos .webp ficam: outros plugins usam o mesmo nome).

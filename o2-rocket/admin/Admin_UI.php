@@ -15,7 +15,6 @@ final class Admin_UI {
 	const OPTION_GROUP = 'o2_rocket_settings_group';
 	const DEFAULT_TAB  = 'dashboard';
 	const TAB_FIELD    = '_o2r_tab';
-	const LOGO_PATH    = 'assets/images/logo.png';
 	const FONT_PATH    = 'assets/fonts/inter-latin-wght-normal.woff2';
 
 	// Bootstrap 5.3.8 (MIT) empacotado no plugin: o painel não depende de CDN.
@@ -50,7 +49,7 @@ final class Admin_UI {
 			$this->get_capability(),
 			self::MENU_SLUG,
 			array( $this, 'render_page' ),
-			'dashicons-performance',
+			Brand::menu_icon(),
 			81
 		);
 	}
@@ -325,23 +324,24 @@ final class Admin_UI {
 		<div class="wrap o2r-wrap" data-bs-theme="light">
 			<header class="o2r-topbar">
 				<div class="o2r-brand">
-					<img
-						class="o2r-brand-logo"
-						src="<?php echo esc_url( plugins_url( self::LOGO_PATH, O2_ROCKET_FILE ) ); ?>"
-						width="68"
-						height="96"
-						alt=""
-					>
+					<span class="o2r-brand-logo"><?php echo Brand::logo(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- SVG do próprio plugin. ?></span>
 					<h1 class="o2r-brand-title"><?php esc_html_e( 'O² Rocket', 'o2-rocket' ); ?></h1>
 					<span class="o2r-brand-divider" aria-hidden="true"></span>
 					<span class="o2r-brand-tagline"><?php esc_html_e( 'Performance e cache', 'o2-rocket' ); ?></span>
 				</div>
-				<span class="o2r-topbar-meta">
-					<?php
-					/* translators: %s: versão do plugin. */
-					echo esc_html( sprintf( __( 'Versão %s', 'o2-rocket' ), O2_ROCKET_VERSION ) );
-					?>
-				</span>
+				<div class="o2r-topbar-meta">
+					<span class="o2r-version">
+						<?php
+						/* translators: %s: versão do plugin. */
+						echo esc_html( sprintf( __( 'v%s', 'o2-rocket' ), O2_ROCKET_VERSION ) );
+						?>
+					</span>
+					<span class="o2r-topbar-divider" aria-hidden="true"></span>
+					<a class="o2r-credit" href="https://www.oxigenweb.com.br/" target="_blank" rel="noopener" aria-label="<?php esc_attr_e( 'Criação OxigenWeb (abre em nova aba)', 'o2-rocket' ); ?>">
+						<span class="o2r-credit-label"><?php esc_html_e( 'Criação', 'o2-rocket' ); ?></span>
+						<?php echo Brand::oxigenweb( array( 'class' => 'o2r-credit-logo' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- SVG do próprio plugin. ?>
+					</a>
+				</div>
 			</header>
 
 			<div class="o2r-shell">
@@ -379,7 +379,11 @@ final class Admin_UI {
 					<div class="o2r-content">
 						<hr class="wp-header-end">
 
-						<?php $this->render_notices(); ?>
+						<?php
+						// Alertas que valem para todas as abas (ex.: cache de página parado).
+						do_action( 'o2_rocket_admin_alerts', $this );
+						$this->render_notices();
+						?>
 
 						<div class="tab-content" id="o2r-tab-content">
 							<?php
@@ -619,8 +623,10 @@ final class Admin_UI {
 		foreach ( $fields as $field ) {
 			$args      = isset( $field['args'] ) ? (array) $field['args'] : array();
 			$row_class = empty( $args['class'] ) ? '' : ' ' . $args['class'];
+			// Campo que depende de outro (requires = id do interruptor): fica esmaecido enquanto o outro está desligado.
+			$requires = empty( $args['requires'] ) ? '' : (string) $args['requires'];
 			?>
-			<div class="<?php echo esc_attr( 'o2r-field' . $row_class ); ?>">
+			<div class="<?php echo esc_attr( 'o2r-field' . $row_class ); ?>"<?php echo '' !== $requires ? ' data-o2r-requires="' . esc_attr( $requires ) . '"' : ''; ?>>
 				<div class="o2r-field-label">
 					<?php if ( ! empty( $args['label_for'] ) ) : ?>
 						<label for="<?php echo esc_attr( $args['label_for'] ); ?>"><?php echo esc_html( $field['title'] ); ?></label>
@@ -757,8 +763,13 @@ body.o2r-admin #wpbody-content > .update-nag {
 .o2r-brand-logo {
 	display: block;
 	flex-shrink: 0;
-	width: auto;
 	height: 64px;
+	color: #FFFFFF;
+}
+.o2r-brand-logo svg {
+	display: block;
+	width: auto;
+	height: 100%;
 }
 .o2r-wrap .o2r-brand-title {
 	margin: 0;
@@ -783,14 +794,53 @@ body.o2r-admin #wpbody-content > .update-nag {
 	white-space: nowrap;
 }
 .o2r-topbar-meta {
-	padding: 7px 12px;
-	background: rgba(255, 255, 255, .14);
-	border: 1px solid rgba(255, 255, 255, .24);
-	border-radius: var(--o2r-radius-sm);
-	color: #FFFFFF;
-	font-size: 13px;
-	font-weight: 600;
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	flex-shrink: 0;
 	white-space: nowrap;
+}
+.o2r-version {
+	color: rgba(255, 255, 255, .6);
+	font-size: 12px;
+	font-weight: 500;
+	letter-spacing: .02em;
+}
+.o2r-topbar-divider {
+	width: 1px;
+	height: 18px;
+	background: rgba(255, 255, 255, .3);
+}
+.o2r-wrap a.o2r-credit {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	color: #FFFFFF;
+	opacity: .75;
+	text-decoration: none;
+	transition: opacity .15s ease;
+}
+.o2r-wrap a.o2r-credit:hover,
+.o2r-wrap a.o2r-credit:focus-visible {
+	color: #FFFFFF;
+	opacity: 1;
+}
+.o2r-wrap a.o2r-credit:focus-visible {
+	outline: 2px solid #FFFFFF;
+	outline-offset: 3px;
+	border-radius: 2px;
+}
+.o2r-credit-label {
+	font-size: 10px;
+	font-weight: 600;
+	letter-spacing: .12em;
+	line-height: 1;
+	text-transform: uppercase;
+}
+.o2r-credit-logo {
+	display: block;
+	width: auto;
+	height: 14px;
 }
 
 .o2r-shell {
@@ -949,6 +999,18 @@ body.o2r-admin #wpbody-content > .update-nag {
 	padding: 24px 0;
 	border-top: 1px solid var(--o2r-border);
 }
+.o2r-field--inactive .o2r-field-label,
+.o2r-field--inactive .o2r-field-control {
+	opacity: .5;
+}
+
+.o2r-code-line {
+	display: inline-block;
+	max-width: 100%;
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+
 .o2r-field:first-child {
 	padding-top: 0;
 	border-top: 0;
@@ -1139,6 +1201,20 @@ body.o2r-admin #wpbody-content > .update-nag {
 	cursor: progress;
 	opacity: .6;
 }
+.o2r-wrap .o2r-button--danger {
+	background: #B91C1C;
+	border-color: #B91C1C;
+	color: #FFFFFF;
+}
+.o2r-wrap .o2r-button--danger:hover {
+	background: #991B1B;
+	border-color: #991B1B;
+	color: #FFFFFF;
+}
+.o2r-wrap .o2r-health-alert {
+	align-items: center;
+	border-width: 2px;
+}
 .o2r-wrap .o2r-button--primary {
 	background: var(--o2r-brand);
 	border-color: var(--o2r-brand);
@@ -1151,6 +1227,164 @@ body.o2r-admin #wpbody-content > .update-nag {
 .o2r-wrap .o2r-button--primary:active {
 	background: var(--o2r-brand-active);
 	border-color: var(--o2r-brand-active);
+}
+
+.o2r-profiles {
+	margin-bottom: 24px;
+}
+.o2r-profiles .o2r-card-header--split {
+	flex-wrap: wrap;
+}
+.o2r-profiles .o2r-card-header--split > div {
+	flex: 1 1 320px;
+}
+.o2r-profiles-current {
+	color: var(--o2r-muted);
+	font-size: 14px;
+	font-weight: 600;
+	white-space: nowrap;
+}
+.o2r-profiles-grid {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 16px;
+}
+.o2r-profile {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	min-width: 0;
+	padding: 20px;
+	background: var(--o2r-surface);
+	border: 1px solid var(--o2r-border);
+	border-radius: var(--o2r-radius);
+}
+.o2r-profile.is-recommended {
+	border-color: var(--o2r-brand);
+	box-shadow: inset 0 0 0 1px var(--o2r-brand);
+}
+.o2r-profile.is-active {
+	background: var(--o2r-brand-50);
+}
+.o2r-profile-top {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 8px;
+}
+.o2r-profile-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 40px;
+	height: 40px;
+	background: var(--o2r-brand-50);
+	border-radius: 8px;
+	color: var(--o2r-brand);
+}
+.o2r-profile.is-active .o2r-profile-icon {
+	background: var(--o2r-surface);
+}
+.o2r-profile-badges {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 6px;
+}
+.o2r-profile-badge {
+	padding: 3px 9px;
+	border-radius: 999px;
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 18px;
+	white-space: nowrap;
+}
+.o2r-profile-badge--recommended {
+	background: var(--o2r-brand);
+	color: #FFFFFF;
+}
+.o2r-profile-badge--active {
+	background: #DCFCE7;
+	color: #166534;
+}
+.o2r-wrap .o2r-profile-name {
+	margin: 0;
+	color: var(--o2r-text);
+	font-size: 18px;
+	font-weight: 700;
+	line-height: 24px;
+}
+.o2r-profile-summary {
+	color: var(--o2r-muted);
+	font-size: 14px;
+}
+.o2r-profile-scales {
+	display: grid;
+	gap: 6px;
+	padding: 10px 12px;
+	background: var(--o2r-subtle);
+	border-radius: var(--o2r-radius-sm);
+}
+.o2r-profile.is-active .o2r-profile-scales {
+	background: var(--o2r-surface);
+}
+.o2r-scale {
+	display: grid;
+	grid-template-columns: 42px auto minmax(0, 1fr);
+	align-items: center;
+	gap: 8px;
+	font-size: 13px;
+}
+.o2r-scale-label {
+	font-weight: 600;
+}
+.o2r-scale-dots {
+	display: inline-flex;
+	gap: 3px;
+}
+.o2r-scale-dot {
+	width: 9px;
+	height: 9px;
+	background: var(--o2r-border-strong);
+	border-radius: 50%;
+}
+.o2r-scale--gain .o2r-scale-dot.is-on {
+	background: #0CA30C;
+}
+.o2r-scale--risk .o2r-scale-dot.is-on {
+	background: #E8890C;
+}
+.o2r-scale-text {
+	overflow: hidden;
+	color: var(--o2r-muted);
+	font-size: 12px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.o2r-wrap .o2r-profile-features {
+	margin: 0;
+	padding-left: 18px;
+	list-style: disc;
+	font-size: 14px;
+}
+.o2r-wrap .o2r-profile-features li {
+	margin: 0 0 3px;
+}
+.o2r-profile-note {
+	margin-top: auto;
+	color: var(--o2r-muted);
+	font-size: 13px;
+}
+.o2r-profile-form .o2r-button {
+	width: 100%;
+}
+.o2r-profiles-foot {
+	margin-top: 16px;
+	color: var(--o2r-muted);
+	font-size: 13px;
+}
+.o2r-wrap .o2r-profile-notice {
+	align-items: center;
 }
 
 .o2r-form-footer {
@@ -1881,6 +2115,9 @@ body.o2r-admin #wpbody-content > .update-nag {
 	.o2r-wrap .o2r-nav-link {
 		white-space: nowrap;
 	}
+	.o2r-profiles-grid {
+		grid-template-columns: minmax(0, 1fr);
+	}
 	.o2r-main {
 		padding: 28px 16px 48px;
 	}
@@ -1897,7 +2134,9 @@ body.o2r-admin #wpbody-content > .update-nag {
 		font-size: 21px;
 	}
 	.o2r-brand-divider,
-	.o2r-brand-tagline {
+	.o2r-brand-tagline,
+	.o2r-version,
+	.o2r-topbar-divider {
 		display: none;
 	}
 	.o2r-wrap .o2r-page-title {
@@ -1971,6 +2210,21 @@ CSS;
 		});
 	}
 
+	// Botões que demoram (aplicar perfil, limpar e pré-carregar): texto de espera e sem clique duplo.
+	document.addEventListener('submit', (event) => {
+		const button = event.target.querySelector('[data-o2r-busy]');
+
+		if (!button || button.dataset.o2rBusyDone) {
+			return;
+		}
+
+		button.dataset.o2rBusyDone = '1';
+		button.textContent = button.dataset.o2rBusy;
+		window.setTimeout(() => {
+			button.disabled = true;
+		}, 0);
+	});
+
 	const forms = Array.from(document.querySelectorAll('.o2r-settings-form'));
 	let submitting = null;
 
@@ -2036,6 +2290,19 @@ CSS;
 		}
 	}
 
+	document.querySelectorAll('[data-o2r-requires]').forEach((field) => {
+		const control = document.getElementById(field.dataset.o2rRequires);
+
+		if (!control) {
+			return;
+		}
+
+		const sync = () => field.classList.toggle('o2r-field--inactive', !control.checked);
+
+		control.addEventListener('change', sync);
+		sync();
+	});
+
 	// Andamento do pré-carregamento: consulta a cada 5 s enquanto houver fila (a consulta também adianta a fila).
 	const preload = document.querySelector('[data-o2r-preload]');
 
@@ -2046,8 +2313,8 @@ CSS;
 		const locale = document.documentElement.lang || 'pt-BR';
 
 		const render = (data) => {
-			const done = data.counts.completed + data.counts.failed;
-			const value = data.total > 0 ? Math.min(100, (done / data.total) * 100) : 100;
+			const done = data.progress.done;
+			const value = data.progress.total > 0 ? Math.min(100, (done / data.progress.total) * 100) : 100;
 			const shown = value > 0 && value < 10 ? Math.round(value * 10) / 10 : Math.round(value);
 
 			fill.style.width = value.toFixed(1) + '%';
@@ -2063,7 +2330,7 @@ CSS;
 			});
 
 			status.textContent = data.running
-				? preload.dataset.labelProgress.replace('%1$s', done.toLocaleString(locale)).replace('%2$s', data.total.toLocaleString(locale))
+				? preload.dataset.labelProgress.replace('%1$s', done.toLocaleString(locale)).replace('%2$s', data.progress.total.toLocaleString(locale))
 				: preload.dataset.labelDone;
 		};
 

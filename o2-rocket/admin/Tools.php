@@ -93,6 +93,7 @@ final class Tools {
 					<div class="o2r-actions">
 						<a class="o2r-button" href="<?php echo esc_url( Cache_Controls::get_action_url( 'all' ) ); ?>"><?php esc_html_e( 'Limpar todo o cache', 'o2-rocket' ); ?></a>
 						<?php if ( $this->preloader->is_enabled() ) : ?>
+							<a class="o2r-button" href="<?php echo esc_url( Cache_Controls::get_action_url( 'purge_preload' ) ); ?>"><?php esc_html_e( 'Limpar e pré-carregar', 'o2-rocket' ); ?></a>
 							<a class="o2r-button" href="<?php echo esc_url( Cache_Controls::get_action_url( 'preload' ) ); ?>"><?php esc_html_e( 'Pré-carregar o cache', 'o2-rocket' ); ?></a>
 						<?php endif; ?>
 					</div>
