@@ -13,9 +13,10 @@ defined( 'ABSPATH' ) || exit;
 // Uma requisição por vez e com orçamento de tempo por execução do WP-Cron: não sobrecarrega o servidor.
 final class Preloader {
 
-	const SETTING_ENABLED  = 'preload_enabled';
-	const SETTING_EXCLUDED = 'preload_excluded_uris';
-	const SETTING_SITEMAPS = 'preload_sitemaps';
+	const SETTING_ENABLED     = 'preload_enabled';
+	const SETTING_EXCLUDED    = 'preload_excluded_uris';
+	const SETTING_SITEMAPS    = 'preload_sitemaps';
+	const SETTING_AFTER_PURGE = 'preload_after_purge';
 
 	const CRON_HOOK      = 'o2_rocket_preload';
 	const CRON_SCHEDULE  = 'o2_rocket_every_minute';

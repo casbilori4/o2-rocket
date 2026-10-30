@@ -1197,6 +1197,164 @@ body.o2r-admin #wpbody-content > .update-nag {
 	border-color: var(--o2r-brand-active);
 }
 
+.o2r-profiles {
+	margin-bottom: 24px;
+}
+.o2r-profiles .o2r-card-header--split {
+	flex-wrap: wrap;
+}
+.o2r-profiles .o2r-card-header--split > div {
+	flex: 1 1 320px;
+}
+.o2r-profiles-current {
+	color: var(--o2r-muted);
+	font-size: 14px;
+	font-weight: 600;
+	white-space: nowrap;
+}
+.o2r-profiles-grid {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 16px;
+}
+.o2r-profile {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	min-width: 0;
+	padding: 20px;
+	background: var(--o2r-surface);
+	border: 1px solid var(--o2r-border);
+	border-radius: var(--o2r-radius);
+}
+.o2r-profile.is-recommended {
+	border-color: var(--o2r-brand);
+	box-shadow: inset 0 0 0 1px var(--o2r-brand);
+}
+.o2r-profile.is-active {
+	background: var(--o2r-brand-50);
+}
+.o2r-profile-top {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 8px;
+}
+.o2r-profile-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 40px;
+	height: 40px;
+	background: var(--o2r-brand-50);
+	border-radius: 8px;
+	color: var(--o2r-brand);
+}
+.o2r-profile.is-active .o2r-profile-icon {
+	background: var(--o2r-surface);
+}
+.o2r-profile-badges {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 6px;
+}
+.o2r-profile-badge {
+	padding: 3px 9px;
+	border-radius: 999px;
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 18px;
+	white-space: nowrap;
+}
+.o2r-profile-badge--recommended {
+	background: var(--o2r-brand);
+	color: #FFFFFF;
+}
+.o2r-profile-badge--active {
+	background: #DCFCE7;
+	color: #166534;
+}
+.o2r-wrap .o2r-profile-name {
+	margin: 0;
+	color: var(--o2r-text);
+	font-size: 18px;
+	font-weight: 700;
+	line-height: 24px;
+}
+.o2r-profile-summary {
+	color: var(--o2r-muted);
+	font-size: 14px;
+}
+.o2r-profile-scales {
+	display: grid;
+	gap: 6px;
+	padding: 10px 12px;
+	background: var(--o2r-subtle);
+	border-radius: var(--o2r-radius-sm);
+}
+.o2r-profile.is-active .o2r-profile-scales {
+	background: var(--o2r-surface);
+}
+.o2r-scale {
+	display: grid;
+	grid-template-columns: 42px auto minmax(0, 1fr);
+	align-items: center;
+	gap: 8px;
+	font-size: 13px;
+}
+.o2r-scale-label {
+	font-weight: 600;
+}
+.o2r-scale-dots {
+	display: inline-flex;
+	gap: 3px;
+}
+.o2r-scale-dot {
+	width: 9px;
+	height: 9px;
+	background: var(--o2r-border-strong);
+	border-radius: 50%;
+}
+.o2r-scale--gain .o2r-scale-dot.is-on {
+	background: #0CA30C;
+}
+.o2r-scale--risk .o2r-scale-dot.is-on {
+	background: #E8890C;
+}
+.o2r-scale-text {
+	overflow: hidden;
+	color: var(--o2r-muted);
+	font-size: 12px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.o2r-wrap .o2r-profile-features {
+	margin: 0;
+	padding-left: 18px;
+	list-style: disc;
+	font-size: 14px;
+}
+.o2r-wrap .o2r-profile-features li {
+	margin: 0 0 3px;
+}
+.o2r-profile-note {
+	margin-top: auto;
+	color: var(--o2r-muted);
+	font-size: 13px;
+}
+.o2r-profile-form .o2r-button {
+	width: 100%;
+}
+.o2r-profiles-foot {
+	margin-top: 16px;
+	color: var(--o2r-muted);
+	font-size: 13px;
+}
+.o2r-wrap .o2r-profile-notice {
+	align-items: center;
+}
+
 .o2r-form-footer {
 	position: sticky;
 	bottom: 0;
@@ -1925,6 +2083,9 @@ body.o2r-admin #wpbody-content > .update-nag {
 	.o2r-wrap .o2r-nav-link {
 		white-space: nowrap;
 	}
+	.o2r-profiles-grid {
+		grid-template-columns: minmax(0, 1fr);
+	}
 	.o2r-main {
 		padding: 28px 16px 48px;
 	}
@@ -2016,6 +2177,21 @@ CSS;
 			window.history.replaceState(null, '', url.toString());
 		});
 	}
+
+	// Botões que demoram (aplicar perfil, limpar e pré-carregar): texto de espera e sem clique duplo.
+	document.addEventListener('submit', (event) => {
+		const button = event.target.querySelector('[data-o2r-busy]');
+
+		if (!button || button.dataset.o2rBusyDone) {
+			return;
+		}
+
+		button.dataset.o2rBusyDone = '1';
+		button.textContent = button.dataset.o2rBusy;
+		window.setTimeout(() => {
+			button.disabled = true;
+		}, 0);
+	});
 
 	const forms = Array.from(document.querySelectorAll('.o2r-settings-form'));
 	let submitting = null;

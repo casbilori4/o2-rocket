@@ -174,6 +174,12 @@ final class Settings {
 			'sanitize_callback' => array( Page_Cache::class, 'sanitize_purge_urls' ),
 		);
 
+		$schema[ Preloader::SETTING_AFTER_PURGE ] = array(
+			'tab'     => self::TAB_PAGE_CACHE,
+			'type'    => 'bool',
+			'default' => true,
+		);
+
 		$schema[ Htaccess::SETTING_GZIP ] = array(
 			'tab'     => self::TAB_PAGE_CACHE,
 			'type'    => 'bool',
