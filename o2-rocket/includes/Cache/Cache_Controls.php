@@ -5,6 +5,7 @@
 
 namespace O2Rocket\Cache;
 
+use O2Rocket\Admin\Brand;
 use O2Rocket\Preload\Preloader;
 
 defined( 'ABSPATH' ) || exit;
@@ -26,6 +27,8 @@ final class Cache_Controls {
 
 	public function register_hooks(): void {
 		add_action( 'admin_bar_menu', array( $this, 'add_admin_bar_menu' ), 90 );
+		add_action( 'wp_enqueue_scripts', array( $this, 'add_admin_bar_style' ) );
+		add_action( 'admin_enqueue_scripts', array( $this, 'add_admin_bar_style' ) );
 		add_action( 'admin_post_' . self::ACTION, array( $this, 'handle_action' ) );
 		add_action( 'admin_notices', array( $this, 'render_notice' ) );
 		add_filter( 'post_row_actions', array( $this, 'filter_row_actions' ), 10, 2 );
@@ -57,6 +60,22 @@ final class Cache_Controls {
 		return wp_nonce_url( $url, self::ACTION . '_' . $scope );
 	}
 
+	// Mesma cor dos ícones da barra (dashicons) no painel e no site, inclusive no hover e no foco.
+	public function add_admin_bar_style(): void {
+		if ( ! is_admin_bar_showing() || ! current_user_can( self::get_capability() ) ) {
+			return;
+		}
+
+		$item = '#wpadminbar #wp-admin-bar-o2-rocket > .ab-item';
+		$css  = $item . ' .o2r-ab-icon{float:left;width:20px;height:20px;margin:6px 6px 0 0;padding:0;color:rgba(240,246,252,.6)}'
+			. $item . ' .o2r-ab-icon:before{content:none}'
+			. $item . ' .o2r-ab-icon svg{display:block;width:20px;height:20px}'
+			. '#wpadminbar #wp-admin-bar-o2-rocket:hover > .ab-item .o2r-ab-icon,#wpadminbar #wp-admin-bar-o2-rocket.hover > .ab-item .o2r-ab-icon,' . $item . ':focus .o2r-ab-icon{color:#72aee6}'
+			. '@media screen and (max-width:782px){' . $item . ' .o2r-ab-icon{width:52px;height:46px;margin:0}' . $item . ' .o2r-ab-icon svg{width:26px;height:26px;margin:10px auto 0}}';
+
+		wp_add_inline_style( 'admin-bar', $css );
+	}
+
 	public function add_admin_bar_menu( $bar ): void {
 		if ( ! $bar instanceof \WP_Admin_Bar || ! current_user_can( self::get_capability() ) || ( is_multisite() && is_network_admin() ) ) {
 			return;
@@ -65,7 +84,7 @@ final class Cache_Controls {
 		$bar->add_node(
 			array(
 				'id'    => 'o2-rocket',
-				'title' => '<span class="ab-icon dashicons-performance" aria-hidden="true" style="top:2px"></span><span class="ab-label">' . esc_html__( 'O² Rocket', 'o2-rocket' ) . '</span>',
+				'title' => '<span class="ab-icon o2r-ab-icon" aria-hidden="true">' . Brand::icon() . '</span><span class="ab-label">' . esc_html__( 'O² Rocket', 'o2-rocket' ) . '</span>',
 				'href'  => admin_url( 'admin.php?page=o2-rocket' ),
 			)
 		);

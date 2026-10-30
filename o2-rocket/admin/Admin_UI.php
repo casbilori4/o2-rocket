@@ -50,7 +50,7 @@ final class Admin_UI {
 			$this->get_capability(),
 			self::MENU_SLUG,
 			array( $this, 'render_page' ),
-			'dashicons-performance',
+			Brand::menu_icon(),
 			81
 		);
 	}
